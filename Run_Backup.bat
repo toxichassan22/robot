@@ -1,0 +1,3 @@
+@echo off
+echo Starting Backup...
+powershell -ExecutionPolicy Bypass -File "%~dp0backup_robot.ps1"

@@ -1,0 +1,60 @@
+# Generated from current project imports.
+
+# --- Core runtime / APIs ---
+aiofiles
+beautifulsoup4
+fastapi>=0.110.0
+google-genai
+google-generativeai
+httpx>=0.27.0
+numpy>=1.26.0
+Pillow
+pydantic
+python-dotenv
+python-multipart
+requests
+uvicorn>=0.27.0
+
+# --- Audio / speech ---
+# `coqui-tts` releases on PyPI currently do not support Python 3.12.
+coqui-tts>=0.22.0; python_version < "3.12"
+# `edge-playback` is used by the code as an optional helper, but it is not
+# available on PyPI for direct installation via `pip install -r`.
+edge-tts
+faster-whisper
+gTTS>=2.5.0
+google-cloud-texttospeech
+piper-tts
+pvporcupine
+PyAudio
+pyttsx3>=2.90
+silero-vad
+sounddevice>=0.4.6
+soundfile
+SpeechRecognition>=3.10.0
+torch
+torchaudio
+vosk>=0.3.45
+yt-dlp
+
+# --- Vision / models ---
+huggingface-hub
+mediapipe>=0.10.0
+ollama
+opencv-python>=4.9.0.0
+
+# --- Hardware / system ---
+psutil>=5.9.8
+pyserial>=3.5
+
+# --- Arabic text tooling used by Mishkal integration ---
+asmai
+pyarabic
+qalsadi
+sylajone
+# Not available on PyPI; keep out of automatic pip installation.
+# maskouk
+# mysam
+
+# --- Testing ---
+pytest>=8.0.0

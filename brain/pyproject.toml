@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "offline-ai-brain"
+version = "0.1.0"
+description = "Offline-first multimodal robotics brain (Raspberry Pi + ESP32)"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+brain = "brain.cli:main"
+pi5 = "pi_5.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["brain*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "pi5/web_ui_backend/tests"]

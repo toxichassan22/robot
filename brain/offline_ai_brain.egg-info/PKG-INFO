@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: offline-ai-brain
+Version: 0.1.0
+Summary: Offline-first multimodal robotics brain (Raspberry Pi + ESP32)
+Requires-Python: >=3.10

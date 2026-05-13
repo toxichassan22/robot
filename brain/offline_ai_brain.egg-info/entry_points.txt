@@ -1,0 +1,3 @@
+[console_scripts]
+brain = brain.cli:main
+pi5 = pi_5.cli:main

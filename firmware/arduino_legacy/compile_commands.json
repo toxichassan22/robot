@@ -1,0 +1,14 @@
+[
+  {
+    "directory": "D:/robot new version",
+    "file": "D:/robot new version/esp32/main/main.ino",
+    "arguments": [
+      "clang++",
+      "-x",
+      "c++",
+      "-std=gnu++17",
+      "-fsyntax-only",
+      "D:/robot new version/esp32/main/main.ino"
+    ]
+  }
+]

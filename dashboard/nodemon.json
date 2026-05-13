@@ -1,0 +1,22 @@
+{
+  "verbose": true,
+  "watch": [
+    "backend/api"
+  ],
+  "ext": "ts,mts,js,json",
+  "ignore": [
+    "frontend/src",
+    "dist",
+    "frontend/public",
+    "node_modules",
+    "backend/api/dist/*",
+    "*.test.ts",
+    "*.spec.ts",
+    "frontend/vite.config.ts"
+  ],
+  "exec": "tsx backend/api/server.ts",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "delay": 2500
+}

@@ -1,0 +1,7 @@
+{
+  "css.lint.unknownAtRules": "ignore",
+  "git.ignoreLimitWarning": true,
+  "editor.unicodeHighlight.ambiguousCharacters": false,
+  "editor.renderControlCharacters": true,
+  "editor.wordWrap": "on"
+}

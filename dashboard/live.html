@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Live Feed</title>
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        h2 {
+            margin-top: 0;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 10px;
+            color: #58a6ff;
+            font-size: 1.2rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        img.camera-feed {
+            width: 100%;
+            border-radius: 8px;
+            background: #000;
+            aspect-ratio: 4/3;
+            object-fit: cover;
+        }
+        .status-item {
+            margin-bottom: 15px;
+        }
+        .status-label {
+            font-size: 0.85rem;
+            color: #8b949e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+        .status-value {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: #e6edf3;
+            padding: 8px 12px;
+            background: #0d1117;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+        }
+        .active { color: #3fb950; }
+        .processing { color: #d29922; }
+    </style>
+</head>
+<body>
+
+    <h1 style="color: #fff; margin-bottom: 30px;">Robot Live Dashboard</h1>
+
+    <div class="container">
+        <!-- Camera View -->
+        <div class="card">
+            <h2>Live Camera Feed</h2>
+            <img src="http://127.0.0.1:8000/api/camera/stream" class="camera-feed" alt="Camera Feed" onerror="this.src=''; this.alt='Camera offline or loading...'">
+        </div>
+
+        <!-- AI State View -->
+        <div class="card" style="display: flex; flex-direction: column;">
+            <h2>AI Internal State</h2>
+            <div id="ai-state-content" style="flex-grow: 1;">
+                Loading state...
+            </div>
+            
+            <!-- Chat Box -->
+            <div style="margin-top: 20px; border-top: 1px solid #30363d; padding-top: 20px;">
+                <div class="status-label">Text Chat (Talk to Robot)</div>
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <input type="text" id="chat-input" placeholder="Type a message..." 
+                        style="flex-grow: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px; color: #fff; outline: none;"
+                        onkeydown="if(event.key === 'Enter') sendMessage()">
+                    <button onclick="sendMessage()" 
+                        style="background: #238636; color: white; border: none; border-radius: 6px; padding: 10px 20px; cursor: pointer; font-weight: 600;">
+                        Send
+                    </button>
+                </div>
+                
+                <div style="margin-top: 15px; display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;">
+                    <div>
+                        <div class="status-label" style="margin-bottom: 2px;">Voice Settings</div>
+                        <select id="voice-select" onchange="changeVoice()" style="background: #161b22; color: #fff; border: 1px solid #30363d; border-radius: 4px; padding: 5px;">
+                            <option value="female">👧 Female (Aoede)</option>
+                            <option value="male">👦 Male (Puck)</option>
+                        </select>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="status-label" style="margin-bottom: 2px;">Active TTS Model & API Key</div>
+                        <div id="tts-status-display" style="color: #a5d6ff; font-size: 0.85rem;">Waiting for TTS...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Council Debate View -->
+    <div class="card" style="margin-top: 20px; max-width: 1200px; width: 100%; box-sizing: border-box;">
+        <h2>🏛️ AI Council Debate (The Brain)</h2>
+        <div id="council-content" style="background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 15px; height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.9rem; line-height: 1.5;">
+            <div style="color: #8b949e; text-align: center; margin-top: 130px;">Awaiting user input to begin debate...</div>
+        </div>
+    </div>
+
+    <script>
+        async function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+            
+            input.value = '';
+            input.disabled = true;
+            
+            try {
+                const res = await fetch("http://127.0.0.1:8000/api/hearing/text", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+                const data = await res.json();
+                console.log("Sent message:", text, data);
+            } catch (e) {
+                console.error("Failed to send message:", e);
+            } finally {
+                input.disabled = false;
+                input.focus();
+            }
+        }
+
+        async function changeVoice() {
+            const voiceGender = document.getElementById('voice-select').value;
+            try {
+                await fetch("http://127.0.0.1:8000/api/debug/voice", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ voiceGender: voiceGender })
+                });
+                console.log("Voice changed to", voiceGender);
+            } catch (e) {
+                console.error("Failed to change voice:", e);
+            }
+        }
+
+        async function fetchState() {
+            // ... rest of fetchState logic ...
+            try {
+                const resState = await fetch("http://127.0.0.1:8000/api/ai/state");
+                const stateData = await resState.json();
+                
+                const resDebug = await fetch("http://127.0.0.1:8000/api/debug_snapshot");
+                const debugData = await resDebug.json();
+                const snapshot = debugData.success ? debugData.snapshot : {};
+
+                let actionText = "Thinking...";
+                if (snapshot.action && snapshot.action.kind === "say" && snapshot.action.payload) {
+                    actionText = snapshot.action.payload.text || "Speaking...";
+                } else if (snapshot.action && snapshot.action.kind) {
+                    actionText = `[Action: ${snapshot.action.kind}]`;
+                } else if (stateData.isProcessing) {
+                    actionText = "Processing...";
+                } else {
+                    actionText = "Waiting for input...";
+                }
+
+                const html = `
+                    <div class="status-item">
+                        <div class="status-label">Robot is Hearing (STT)</div>
+                        <div class="status-value" style="color: #a5d6ff; font-style: italic;">
+                            "${snapshot.heardText || '...'}"
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">Robot is Seeing (Vision Model)</div>
+                        <div class="status-value" style="font-size: 0.95rem; line-height: 1.4;">
+                            ${snapshot.visionDesc || 'Looking around...'}
+                        </div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">Robot Reply (LLM / TTS)</div>
+                        <div class="status-value" style="color: #7ee787;">
+                            ${actionText}
+                        </div>
+                    </div>
+                    <div class="status-item" style="margin-top: 20px; border-top: 1px solid #30363d; padding-top: 15px;">
+                        <div class="status-label">Audio State</div>
+                        <div class="status-value ${stateData.audioState === 'ACTIVE' ? 'active' : 'processing'}">${stateData.audioState || 'SLEEP'}</div>
+                    </div>
+                `;
+                document.getElementById('ai-state-content').innerHTML = html;
+                
+                if (stateData.ttsStatus && stateData.ttsStatus.model) {
+                    document.getElementById('tts-status-display').innerHTML = `
+                        Model: <span style="color: #7ee787;">${stateData.ttsStatus.model}</span><br>
+                        Key: <span style="color: #d29922;">${stateData.ttsStatus.key}</span>
+                    `;
+                }
+
+                // Fetch Council Debate State
+                try {
+                    const resDebate = await fetch("http://127.0.0.1:8000/api/debate/state");
+                    if (resDebate.ok) {
+                        const debateData = await resDebate.json();
+                        const councilDiv = document.getElementById('council-content');
+                        if (debateData.logs && debateData.logs.length > 0) {
+                            councilDiv.innerHTML = debateData.logs.map(log => {
+                                let color = "#c9d1d9";
+                                if (log.includes("ROUND 1")) color = "#58a6ff";
+                                else if (log.includes("ROUND 3")) color = "#d29922";
+                                else if (log.includes("TIMEOUT") || log.includes("Error") || log.includes("FAILED")) color = "#f85149";
+                                else if (log.includes("✅")) color = "#3fb950";
+                                else if (log.includes("🧠")) color = "#a5d6ff";
+                                
+                                let formattedLog = log.replace(/\n/g, "<br>");
+                                
+                                return `<div style="color: ${color}; margin-bottom: 10px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px; border-left: 3px solid ${color};">${formattedLog}</div>`;
+                            }).join("");
+                            // Auto-scroll to bottom
+                            councilDiv.scrollTop = councilDiv.scrollHeight;
+                        } else if (!debateData.is_debating) {
+                             // Only show waiting if not actively debating and no logs
+                             // councilDiv.innerHTML = '<div style="color: #8b949e; text-align: center; margin-top: 130px;">Awaiting user input to begin debate...</div>';
+                        }
+                    }
+                } catch (e) {
+                    // Fail silently for debate endpoint if it doesn't exist yet
+                }
+
+            } catch (e) {
+                document.getElementById('ai-state-content').innerHTML = `
+                    <div style="color: #f85149;">Connection error. Make sure start_robot.bat is running.</div>
+                `;
+            }
+        }
+
+        // Update state every 1 second
+        setInterval(fetchState, 1000);
+        fetchState();
+    </script>
+</body>
+</html>

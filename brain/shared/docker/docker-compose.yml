@@ -1,0 +1,35 @@
+services:
+  web-frontend:
+    build:
+      context: ../../web_ui/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_PROXY_TARGET=http://web-backend:8000
+    depends_on:
+      - web-backend
+
+  web-backend:
+    build:
+      context: ../../web_ui/backend
+      dockerfile: Dockerfile
+    environment:
+      - ROBOT_SETTINGS_PIN=1234
+      - ROBOT_SETTINGS_PATH=../../data/robot_settings.json
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../data:/data
+
+  brain:
+    build:
+      context: ../../
+      dockerfile: shared/docker/Dockerfile.brain
+    environment:
+      - BRAIN_MEMORY_DB_PATH=../../data/brain.sqlite
+      - BRAIN_SETTINGS_PATH=../../data/robot_settings.json
+      - BRAIN_OLLAMA_BASE_URL=http://127.0.0.1:11434
+    volumes:
+      - ../../data:/data
+

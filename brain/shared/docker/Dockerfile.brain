@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY requirements.txt ./requirements.txt
+RUN pip install -r requirements.txt --no-cache-dir
+COPY brain ./brain
+COPY data ./data
+COPY .env.example ./.env.example
+
+ENV PYTHONUNBUFFERED=1
+ENV BRAIN_SETTINGS_PATH=/app/data/robot_settings.json
+ENV BRAIN_MEMORY_DB_PATH=/app/data/brain.sqlite
+
+VOLUME ["/app/data"]
+
+CMD ["python", "-m", "brain.cli", "run", "--once"]

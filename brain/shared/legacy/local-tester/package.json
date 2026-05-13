@@ -1,0 +1,13 @@
+﻿{
+  "name": "local-tester",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix ..\\web_ui run dev",
+    "build": "npm --prefix ..\\web_ui run build",
+    "lint": "npm --prefix ..\\web_ui run lint",
+    "check": "npm --prefix ..\\web_ui run check",
+    "test": "npm --prefix ..\\web_ui run test"
+  }
+}
