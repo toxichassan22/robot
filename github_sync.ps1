@@ -12,7 +12,7 @@ if ($status) {
     git commit -m "Auto-sync backup $date"
     
     # Push to GitHub
-    git push origin master
+    git push origin main
     
     Write-Host "Changes pushed to GitHub successfully at $date"
 } else {

@@ -1135,17 +1135,40 @@ class BrainRuntime:
         print("=" * 55, flush=True)
         print(flush=True)
 
-        # Create tasks
-        server_task = asyncio.create_task(web.serve())
-        cmd_task = asyncio.create_task(self.process_commands())
-        perception_task = asyncio.create_task(self.perception_loop())
-        voice_task = asyncio.create_task(
-            self.gemini_live_voice_loop() if self.gemini_live_audio_enabled else self.voice_loop()
+        # --- Resilient task wrapper ---
+        # Non-critical tasks (camera, mic, heartbeat, etc.) should NOT
+        # kill the web server if they crash.  Only log the error.
+        async def _resilient(name: str, coro):
+            try:
+                await coro
+            except asyncio.CancelledError:
+                raise  # let cancellation propagate normally
+            except Exception as exc:
+                print(f"[WARNING] Task '{name}' crashed: {exc}", flush=True)
+                logging.warning(f"Task '{name}' crashed and will not restart: {exc}")
+
+        # Create tasks – wrap optional hardware tasks so failures are isolated
+        server_task = asyncio.create_task(web.serve())          # CRITICAL
+        cmd_task    = asyncio.create_task(self.process_commands())  # CRITICAL
+
+        perception_task = asyncio.create_task(
+            _resilient("perception_loop", self.perception_loop())
         )
-        
-        heartbeat_task = asyncio.create_task(self.heartbeat_manager.start())
-        thermal_task = asyncio.create_task(self.thermal_monitor.start())
-        health_task = asyncio.create_task(self.connection_health_loop())
+        voice_task = asyncio.create_task(
+            _resilient(
+                "voice_loop",
+                self.gemini_live_voice_loop() if self.gemini_live_audio_enabled else self.voice_loop(),
+            )
+        )
+        heartbeat_task = asyncio.create_task(
+            _resilient("heartbeat", self.heartbeat_manager.start())
+        )
+        thermal_task = asyncio.create_task(
+            _resilient("thermal_monitor", self.thermal_monitor.start())
+        )
+        health_task = asyncio.create_task(
+            _resilient("connection_health", self.connection_health_loop())
+        )
         
         # Say welcome message
         self.command_queue.put_nowait({
@@ -1155,7 +1178,7 @@ class BrainRuntime:
             }
         })
         
-        # Keep alive
+        # Keep alive – only the critical pair (server + commands) must stay up
         try:
             await asyncio.gather(
                 server_task, 
