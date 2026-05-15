@@ -111,6 +111,7 @@ class GestureDetector:
             return None
     
     def _map_gesture(self, name: str) -> str:
+        return self._normalize_gesture_name(name)
         m = {
             "Thumb_Up": "نعم",
             "Thumb_Down": "لا",
@@ -122,7 +123,160 @@ class GestureDetector:
         }
         return m.get(name, name)
 
-    def detect(self, frame: Any) -> Optional[Dict[str, str]]:
+    @staticmethod
+    def _normalize_gesture_name(name: str) -> str:
+        raw = str(name or "").strip()
+        lowered = raw.lower().replace("-", "_").replace(" ", "_")
+        m = {
+            "thumb_up": "thumbs_up",
+            "thumbs_up": "thumbs_up",
+            "thumb_down": "thumbs_down",
+            "thumbs_down": "thumbs_down",
+            "victory": "scissors",
+            "iloveyou": "i_love_you",
+            "i_love_you": "i_love_you",
+            "open_palm": "open_palm",
+            "closed_fist": "fist",
+            "pointing_up": "pointing_up",
+            "none": "",
+        }
+        return m.get(lowered, lowered)
+
+    @staticmethod
+    def _gesture_label(name: str) -> str:
+        labels = {
+            "heart": "heart with hands",
+            "finger_heart": "finger heart",
+            "hands_together": "hands together",
+            "thumbs_up": "thumbs up",
+            "thumbs_down": "thumbs down",
+            "wave": "wave",
+            "pointing": "pointing",
+            "pointing_up": "pointing up",
+            "open_palm": "open palm",
+            "fist": "fist",
+            "rock": "rock/fist",
+            "paper": "open hand",
+            "scissors": "peace/victory",
+            "ok": "OK sign",
+            "call_me": "call me",
+            "i_love_you": "I love you",
+        }
+        return labels.get(name, name.replace("_", " "))
+
+    @staticmethod
+    def _as_sign_fields(value: str | None) -> dict[str, str]:
+        if not value:
+            return {}
+        if len(value) == 1 and "A" <= value <= "Z":
+            return {"sign_alphabet": value}
+        return {"sign_word": value}
+
+    @staticmethod
+    def _payload(
+        primary: str,
+        *,
+        confidence: float = 0.8,
+        hand_count: int = 1,
+        hands: list[dict[str, Any]] | None = None,
+        shortcuts: list[str] | None = None,
+        sign_value: str | None = None,
+    ) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "primary": primary,
+            "label": GestureDetector._gesture_label(primary),
+            "confidence": round(float(confidence), 2),
+            "hand_count": int(hand_count),
+        }
+        if hands:
+            out["hands"] = hands
+        if shortcuts:
+            out["shortcuts"] = shortcuts
+        out.update(GestureDetector._as_sign_fields(sign_value))
+        return out
+
+    def _handedness_for(self, results: Any, index: int) -> str:
+        try:
+            handedness = getattr(results, "multi_handedness", None)
+            if handedness and len(handedness) > index:
+                c = handedness[index].classification[0]
+                return str(c.label).lower()
+        except Exception:
+            pass
+        return "unknown"
+
+    def _tasks_handedness_for(self, result: Any, index: int) -> str:
+        try:
+            handedness = getattr(result, "handedness", None)
+            if handedness and len(handedness) > index:
+                c = handedness[index][0]
+                return str(getattr(c, "category_name", "") or "").lower()
+        except Exception:
+            pass
+        return "unknown"
+
+    @staticmethod
+    def _dist_pts(a: Any, b: Any) -> float:
+        dx = float(a.x) - float(b.x)
+        dy = float(a.y) - float(b.y)
+        return float((dx * dx + dy * dy) ** 0.5)
+
+    @staticmethod
+    def _hand_center(lm: Any) -> tuple[float, float]:
+        pts = lm.landmark
+        xs = [float(p.x) for p in pts]
+        ys = [float(p.y) for p in pts]
+        return (sum(xs) / len(xs), sum(ys) / len(ys))
+
+    def _detect_two_hand_shortcut(self, hands: list[Any]) -> tuple[str, float] | None:
+        if len(hands) < 2:
+            return None
+        a = hands[0].landmark
+        b = hands[1].landmark
+        index_close = self._dist_pts(a[8], b[8]) < 0.09
+        thumb_close = self._dist_pts(a[4], b[4]) < 0.11
+        index_above_thumb = ((a[8].y + b[8].y) / 2.0) < ((a[4].y + b[4].y) / 2.0) - 0.025
+        if index_close and thumb_close and index_above_thumb:
+            return ("heart", 0.9)
+
+        paired = [self._dist_pts(a[i], b[i]) for i in (4, 8, 12, 16, 20)]
+        wrist_close = self._dist_pts(a[0], b[0]) < 0.18
+        if wrist_close and (sum(paired) / len(paired)) < 0.08:
+            return ("hands_together", 0.82)
+
+        return None
+
+    def _single_hand_shortcut(self, lm: Any, handed: str) -> tuple[str, float] | None:
+        pts = lm.landmark
+        st = self._sign_rec._finger_states(lm)
+        pinch = self._dist_pts(pts[4], pts[8])
+        if pinch < 0.055:
+            if st["middle"] and st["ring"] and st["pinky"]:
+                return ("ok", 0.88)
+            if not st["middle"] and not st["ring"] and not st["pinky"]:
+                return ("finger_heart", 0.82)
+        if st["thumb"] and st["pinky"] and not st["index"] and not st["middle"] and not st["ring"]:
+            return ("call_me", 0.84)
+        return None
+
+    def _recognize_static_gesture(self, img_rgb: Any) -> Dict[str, Any] | None:
+        gr = self._ensure_gr()
+        if not gr:
+            return None
+        try:
+            img = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+            r = gr.recognize(img)
+            if r and getattr(r, "gestures", None) and r.gestures:
+                cat = r.gestures[0][0]
+                primary = self._map_gesture(str(getattr(cat, "category_name", "")))
+                if primary:
+                    score = float(getattr(cat, "score", 0.8) or 0.8)
+                    return self._payload(primary, confidence=score)
+        except BaseException:
+            pass
+        return None
+
+    def _detect_legacy_single_hand(self, frame: Any) -> Optional[Dict[str, str]]:
         """
         Processes a BGR frame and returns simple gesture data used by the planner.
         Returns None or dict with:
@@ -246,6 +400,118 @@ class GestureDetector:
         except Exception:
             pass
         self._gesture_recognizer = None
+
+    def detect(self, frame: Any) -> Optional[Dict[str, Any]]:
+        """
+        Processes a BGR frame and returns normalized gesture metadata.
+        Returns normalized hand, shortcut, and sign metadata.
+        """
+        if frame is None:
+            return None
+
+        hinst = self._ensure()
+        if not hinst:
+            return None
+
+        try:
+            try:
+                import cv2
+                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            except Exception:
+                try:
+                    import numpy as np
+                    if isinstance(frame, np.ndarray) and frame.ndim == 3 and frame.shape[2] == 3:
+                        img_rgb = frame[:, :, ::-1].copy()
+                    else:
+                        return None
+                except Exception:
+                    return None
+
+            hand_landmarks: list[Any] = []
+            handedness: list[str] = []
+
+            if self._hands is not None:
+                results = self._hands.process(img_rgb)
+                if results and getattr(results, "multi_hand_landmarks", None):
+                    hand_landmarks = list(results.multi_hand_landmarks)
+                    handedness = [self._handedness_for(results, i) for i in range(len(hand_landmarks))]
+            elif self._tasks_hand is not None and self._mp_vision is not None:
+                img = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+                res = self._tasks_hand.detect(img)
+                if res and getattr(res, "hand_landmarks", None):
+                    hand_landmarks = [_LandmarkList(lms) for lms in res.hand_landmarks]
+                    handedness = [self._tasks_handedness_for(res, i) for i in range(len(hand_landmarks))]
+
+            if not hand_landmarks:
+                return self._recognize_static_gesture(img_rgb)
+
+            hands_meta: list[dict[str, Any]] = []
+            shortcuts: list[str] = []
+            sign_value: str | None = None
+            primary = "unknown"
+            confidence = 0.5
+
+            two_hand = self._detect_two_hand_shortcut(hand_landmarks)
+            if two_hand is not None:
+                primary, confidence = two_hand
+                shortcuts.append(primary)
+
+            for i, lm in enumerate(hand_landmarks):
+                handed = handedness[i] if i < len(handedness) else "unknown"
+                shortcut = self._single_hand_shortcut(lm, handed)
+                gesture, score = self._classify(lm, handed=handed)
+                letter = None
+                if len(hand_landmarks) == 1:
+                    letter = self._sign_rec.classify(lm, handed=handed, seq=self._sign_seq)
+                    if letter:
+                        sign_value = letter
+
+                normalized = self._normalize_gesture_name(gesture)
+                hand_meta: dict[str, Any] = {
+                    "index": i,
+                    "handedness": handed,
+                    "gesture": normalized,
+                    "confidence": round(float(score), 2),
+                }
+                cx, cy = self._hand_center(lm)
+                hand_meta["position"] = {
+                    "x": round(cx, 3),
+                    "y": round(cy, 3),
+                    "horizontal": "left" if cx < 0.33 else ("right" if cx > 0.67 else "center"),
+                    "vertical": "top" if cy < 0.33 else ("bottom" if cy > 0.67 else "middle"),
+                }
+                if letter:
+                    hand_meta.update(self._as_sign_fields(letter))
+                if shortcut is not None:
+                    hand_meta["shortcut"] = shortcut[0]
+                    if shortcut[0] not in shortcuts:
+                        shortcuts.append(shortcut[0])
+                    if primary == "unknown":
+                        primary, confidence = shortcut
+                hands_meta.append(hand_meta)
+
+                if primary == "unknown" and normalized != "unknown":
+                    primary = normalized
+                    confidence = score
+
+            if primary == "unknown" and sign_value:
+                primary = "sign"
+                confidence = 0.75
+
+            if primary == "unknown":
+                return None
+
+            return self._payload(
+                primary,
+                confidence=confidence,
+                hand_count=len(hand_landmarks),
+                hands=hands_meta,
+                shortcuts=shortcuts,
+                sign_value=sign_value,
+            )
+        except Exception as e:
+            logging.error(f"MediaPipe process error: {e}")
+            return None
 
 class _SignAlphabetRecognizer:
     """ASL alphabet recognizer (all 26 letters) + Arabic sign word detection."""

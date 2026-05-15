@@ -300,8 +300,11 @@ class BrainRuntime:
             return False
         face = vision.get("face") if isinstance(vision.get("face"), dict) else {}
         pose = vision.get("pose") if isinstance(vision.get("pose"), dict) else {}
+        ocr = vision.get("ocr") if isinstance(vision.get("ocr"), dict) else {}
         appearance = face.get("appearance") if isinstance(face.get("appearance"), dict) else {}
         if appearance.get("shirt_color"):
+            return True
+        if ocr.get("text"):
             return True
         return bool(face or pose)
 
@@ -1081,6 +1084,7 @@ class BrainRuntime:
         
         gestures = p.gestures or {}
         sign = gestures.get("sign_alphabet") or gestures.get("sign_word")
+        gesture_label = gestures.get("label") or gestures.get("primary")
         
         parts = []
         if heard_text:
@@ -1095,6 +1099,8 @@ class BrainRuntime:
             v_parts.append(attention)
         if sign:
             v_parts.append(f"عمل إشارة '{sign}'")
+        elif gesture_label:
+            v_parts.append(f"عمل حركة '{gesture_label}'")
             
         if v_parts:
             parts.append("بينما أرى: " + " و ".join(v_parts))

@@ -15,6 +15,7 @@ from brain.config import BrainConfig
 from brain.perception.camera import Camera
 from brain.perception.frame_buffer import PriorityFrameQueue, TimestampedFrame, VLMFrameCandidate, now_ms
 from brain.perception.gesture import GestureDetector
+from brain.perception.ocr import OCRReader
 from brain.vision.vlm_client import VLMClient, FallbackVLMClient, build_vlm
 from brain.types import PerceptionState
 
@@ -44,11 +45,13 @@ class UnifiedPerceiver:
         self._cached_vision_data: dict | None = None
         self._cached_face: dict | None = None
         self._cached_pose: dict | None = None
+        self._cached_ocr: dict | None = None
         self._cached_scene_change_score = 0.0
         self._last_motion_ts = 0.0
         self._last_gesture_ts = 0.0
         self._last_face_ts = 0.0
         self._last_pose_ts = 0.0
+        self._last_ocr_ts = 0.0
         self._last_vlm_enqueue_ts = 0.0
         self._last_motion_burst_enqueue_ts = 0.0
         self._prev_motion = False
@@ -62,6 +65,9 @@ class UnifiedPerceiver:
         )
         self._vlm_worker_thread: threading.Thread | None = None
         self._vlm_worker_stop = threading.Event()
+        self.ocr = OCRReader(
+            min_confidence=getattr(cfg, "perf_ocr_min_confidence", 45.0),
+        ) if getattr(cfg, "perf_ocr_enabled", True) else None
         
         if cfg.gesture_detection_enabled:
             # We assume camera is needed if gesture is enabled, or if we want vision features later
@@ -318,6 +324,43 @@ class UnifiedPerceiver:
         )
         return any(k in lowered for k in keywords)
 
+    @staticmethod
+    def _is_ocr_request(text: str | None) -> bool:
+        if not isinstance(text, str) or not text.strip():
+            return False
+        lowered = text.lower()
+        keywords = (
+            "read", "text", "ocr", "document", "paper", "prescription", "written",
+            "اقرا", "اقرأ", "مكتوب", "نص", "ورقة", "روشتة", "روشته", "كتابة",
+        )
+        return any(k in lowered for k in keywords)
+
+    def _maybe_read_ocr(
+        self,
+        frame: Any,
+        *,
+        text: str | None,
+        scene_change_score: float,
+        force: bool = False,
+    ) -> dict | None:
+        if self.ocr is None:
+            return self._cached_ocr
+        now = time.time()
+        interval = float(getattr(self.cfg, "perf_ocr_interval_s", 2.0) or 2.0)
+        should_read = (
+            force
+            or self._is_ocr_request(text)
+            or scene_change_score >= 0.08
+            or (now - self._last_ocr_ts) >= interval
+        )
+        if not should_read:
+            return self._cached_ocr
+        result = self.ocr.read(frame)
+        self._last_ocr_ts = now
+        if result:
+            self._cached_ocr = result
+        return self._cached_ocr
+
     def _queue_vlm_frame(
         self,
         frame_record: TimestampedFrame,
@@ -476,6 +519,14 @@ class UnifiedPerceiver:
                 "Describe the scene simply." if level < 2 else
                 "In detail: Describe the person, their clothes, objects they are holding, and any visible text."
             )
+            ocr_data = self._maybe_read_ocr(
+                frame_record.frame,
+                text=prompt,
+                scene_change_score=1.0,
+                force=level >= 2 or self._is_ocr_request(prompt),
+            )
+            if ocr_data and ocr_data.get("text"):
+                default_prompt += f" Known OCR text candidate: {ocr_data.get('text')}"
             
             desc = self._run_vlm_request(
                 jpg,
@@ -548,7 +599,7 @@ class UnifiedPerceiver:
                 return None
             self._face_mesh = mp.solutions.face_mesh.FaceMesh(
                 static_image_mode=False,
-                max_num_faces=1,
+                max_num_faces=3,
                 min_detection_confidence=0.5,
                 min_tracking_confidence=0.5,
                 refine_landmarks=True,
@@ -1139,9 +1190,69 @@ class UnifiedPerceiver:
                 "emotion_confidence": confidence,
                 "eyes_closed": eyes_closed,
                 "person_present": True,
+                "face_count": len(mfl),
             }
 
+            try:
+                xs = [float(p.x) for p in pts]
+                ys = [float(p.y) for p in pts]
+                x0 = max(0.0, min(xs))
+                y0 = max(0.0, min(ys))
+                x1 = min(1.0, max(xs))
+                y1 = min(1.0, max(ys))
+                cx = (x0 + x1) / 2.0
+                cy = (y0 + y1) / 2.0
+                area = max(0.0, (x1 - x0) * (y1 - y0))
+                out["position"] = {
+                    "x": round(cx, 3),
+                    "y": round(cy, 3),
+                    "horizontal": "left" if cx < 0.33 else ("right" if cx > 0.67 else "center"),
+                    "vertical": "top" if cy < 0.33 else ("bottom" if cy > 0.67 else "middle"),
+                    "distance": "close" if area > 0.18 else ("far" if area < 0.045 else "medium"),
+                }
+                out["bbox"] = {
+                    "x": round(x0, 3),
+                    "y": round(y0, 3),
+                    "w": round(x1 - x0, 3),
+                    "h": round(y1 - y0, 3),
+                }
+            except Exception:
+                pass
+
             # ── Detailed face metrics for debug / VLM context ──
+            if len(mfl) > 1:
+                other_faces: list[dict[str, Any]] = []
+                for idx, other in enumerate(mfl[1:], start=1):
+                    try:
+                        other_pts = other.landmark
+                        xs = [float(p.x) for p in other_pts]
+                        ys = [float(p.y) for p in other_pts]
+                        x0 = max(0.0, min(xs))
+                        y0 = max(0.0, min(ys))
+                        x1 = min(1.0, max(xs))
+                        y1 = min(1.0, max(ys))
+                        cx = (x0 + x1) / 2.0
+                        cy = (y0 + y1) / 2.0
+                        other_faces.append({
+                            "index": idx,
+                            "position": {
+                                "x": round(cx, 3),
+                                "y": round(cy, 3),
+                                "horizontal": "left" if cx < 0.33 else ("right" if cx > 0.67 else "center"),
+                                "vertical": "top" if cy < 0.33 else ("bottom" if cy > 0.67 else "middle"),
+                            },
+                            "bbox": {
+                                "x": round(x0, 3),
+                                "y": round(y0, 3),
+                                "w": round(x1 - x0, 3),
+                                "h": round(y1 - y0, 3),
+                            },
+                        })
+                    except Exception:
+                        continue
+                if other_faces:
+                    out["other_faces"] = other_faces
+
             mouth_h = self._dist(pts[13], pts[14])
             mouth_w = self._dist(pts[61], pts[291])
             mar = float(mouth_h / mouth_w) if mouth_w > 0 else 0.0
@@ -1216,6 +1327,42 @@ class UnifiedPerceiver:
                 pass
 
             out: dict[str, Any] = {"posture": posture}
+            try:
+                visible = [
+                    p for p in lm
+                    if float(getattr(p, "visibility", 1.0) or 0.0) >= 0.35
+                ]
+                if visible:
+                    xs = [float(p.x) for p in visible]
+                    ys = [float(p.y) for p in visible]
+                    cx = sum(xs) / len(xs)
+                    cy = sum(ys) / len(ys)
+                    out["position"] = {
+                        "x": round(cx, 3),
+                        "y": round(cy, 3),
+                        "horizontal": "left" if cx < 0.33 else ("right" if cx > 0.67 else "center"),
+                        "vertical": "top" if cy < 0.33 else ("bottom" if cy > 0.67 else "middle"),
+                    }
+                    out["bbox"] = {
+                        "x": round(max(0.0, min(xs)), 3),
+                        "y": round(max(0.0, min(ys)), 3),
+                        "w": round(min(1.0, max(xs)) - max(0.0, min(xs)), 3),
+                        "h": round(min(1.0, max(ys)) - max(0.0, min(ys)), 3),
+                    }
+                out["hands"] = {
+                    "left": {
+                        "x": round(float(left_wrist.x), 3),
+                        "y": round(float(left_wrist.y), 3),
+                        "raised": bool(left_wrist.y < nose.y),
+                    },
+                    "right": {
+                        "x": round(float(right_wrist.x), 3),
+                        "y": round(float(right_wrist.y), 3),
+                        "raised": bool(right_wrist.y < nose.y),
+                    },
+                }
+            except Exception:
+                pass
             if action is not None:
                 out["action"] = action
             return out
@@ -1345,8 +1492,19 @@ class UnifiedPerceiver:
                             except Exception as e:
                                 logging.error(f"Pose detection failed: {e}")
 
-                    if self._cached_face is not None or self._cached_pose is not None:
-                        vision_data = {"face": self._cached_face, "pose": self._cached_pose}
+                    ocr_data = self._maybe_read_ocr(
+                        frame,
+                        text=text,
+                        scene_change_score=float(scene_change_score),
+                        force=self._is_ocr_request(text),
+                    ) if CV2_AVAILABLE else self._cached_ocr
+
+                    if self._cached_face is not None or self._cached_pose is not None or ocr_data is not None:
+                        vision_data = {
+                            "face": self._cached_face,
+                            "pose": self._cached_pose,
+                            "ocr": ocr_data,
+                        }
                     else:
                         vision_data = None
                     self._cached_vision_data = vision_data

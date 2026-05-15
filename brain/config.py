@@ -104,6 +104,9 @@ class BrainConfig:
     perf_audio_period_ms: int = 1000
     perf_vlm_queue_size: int = 8
     perf_vlm_max_frame_age_ms: int = 10000
+    perf_ocr_enabled: bool = True
+    perf_ocr_interval_s: float = 2.0
+    perf_ocr_min_confidence: float = 45.0
     perf_vlm_on_transition: bool = True
     perf_vlm_on_scene_change: bool = True
     perf_vlm_on_ambiguous: bool = True
@@ -242,6 +245,9 @@ class BrainConfig:
             perf_audio_period_ms=BrainConfig._parse_int("PERF_AUDIO_PERIOD_MS", 1000, min_v=200, max_v=5000),
             perf_vlm_queue_size=BrainConfig._parse_int("PERF_VLM_QUEUE_SIZE", 8, min_v=1, max_v=64),
             perf_vlm_max_frame_age_ms=BrainConfig._parse_int("PERF_VLM_MAX_FRAME_AGE_MS", 10000, min_v=1000, max_v=60000),
+            perf_ocr_enabled=os.getenv("PERF_OCR_ENABLED", "true").lower() in ("1", "true", "yes", "on"),
+            perf_ocr_interval_s=BrainConfig._parse_float("PERF_OCR_INTERVAL_S", 2.0, min_v=0.5, max_v=30.0),
+            perf_ocr_min_confidence=BrainConfig._parse_float("PERF_OCR_MIN_CONFIDENCE", 45.0, min_v=0.0, max_v=100.0),
             perf_vlm_on_transition=os.getenv("PERF_VLM_ON_TRANSITION", "true").lower() in ("1", "true", "yes", "on"),
             perf_vlm_on_scene_change=os.getenv("PERF_VLM_ON_SCENE_CHANGE", "true").lower() in ("1", "true", "yes", "on"),
             perf_vlm_on_ambiguous=os.getenv("PERF_VLM_ON_AMBIGUOUS", "true").lower() in ("1", "true", "yes", "on"),

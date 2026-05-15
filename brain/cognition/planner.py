@@ -38,8 +38,12 @@ class RuleBasedPlanner(Planner):
         q = str(question or "").strip().lower()
         face = vision.get("face") if isinstance(vision.get("face"), dict) else {}
         pose = vision.get("pose") if isinstance(vision.get("pose"), dict) else {}
+        ocr = vision.get("ocr") if isinstance(vision.get("ocr"), dict) else {}
         appearance = face.get("appearance") if isinstance(face.get("appearance"), dict) else {}
         shirt_color = str(appearance.get("shirt_color") or "").strip()
+        ocr_text = str(ocr.get("text") or "").strip()
+        if ocr_text and any(k in q for k in ("اقرا", "اقرأ", "مكتوب", "read", "text", "ocr")):
+            return f"النص المقروء: {ocr_text}"
         if "لابس" in q and shirt_color:
             return f"إنت لابس تيشيرت {shirt_color}."
         if "شايف" in q and shirt_color:
@@ -162,6 +166,14 @@ class RuleBasedPlanner(Planner):
                     binding = "positive_feedback"
                 elif primary_type == "thumbs_down":
                     binding = "negative_feedback"
+                elif primary_type in {"heart", "finger_heart"}:
+                    binding = "affection"
+                elif primary_type == "ok":
+                    binding = "positive_feedback"
+                elif primary_type in {"open_palm", "paper"}:
+                    binding = "greet"
+                elif primary_type == "i_love_you":
+                    binding = "affection"
             
             if binding == "rps" or primary_type in {"rock", "paper", "scissors"}:
                  # Implicit RPS if gesture is one of them
@@ -197,6 +209,9 @@ class RuleBasedPlanner(Planner):
 
             if binding == "negative_feedback":
                 return ActionCommand(kind="say", payload={"text": "تمام، هحاول أتحسن."})
+
+            if binding == "affection":
+                return ActionCommand(kind="say", payload={"text": "شوفت الإشارة. حركة لطيفة جدًا."})
 
         raw_text = (perception.text or "").strip()
         text = raw_text.lower()
