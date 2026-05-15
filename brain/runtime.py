@@ -264,6 +264,11 @@ class BrainRuntime:
                 "heardText": heard_text if heard_text is not None else previous.get("heardText"),
                 "rewrittenText": rewritten_text if rewritten_text is not None else previous.get("rewrittenText"),
                 "visionDesc": (perception.vision_desc if perception and perception.vision_desc is not None else previous.get("visionDesc")),
+                "visionDescFrameTsMs": (getattr(perception, "vision_desc_ts_ms", None) if perception and getattr(perception, "vision_desc_ts_ms", None) is not None else previous.get("visionDescFrameTsMs")),
+                "visionDescLatencyMs": (getattr(perception, "vision_desc_latency_ms", None) if perception and getattr(perception, "vision_desc_latency_ms", None) is not None else previous.get("visionDescLatencyMs")),
+                "visionDescEvent": (getattr(perception, "vision_desc_event", None) if perception and getattr(perception, "vision_desc_event", None) is not None else previous.get("visionDescEvent")),
+                "visionDescAgeMs": (getattr(perception, "vision_desc_age_ms", None) if perception and getattr(perception, "vision_desc_age_ms", None) is not None else previous.get("visionDescAgeMs")),
+                "vlmQueue": (getattr(perception, "vlm_queue", None) if perception and getattr(perception, "vlm_queue", None) is not None else previous.get("vlmQueue")),
                 "vision": (perception.vision if perception and perception.vision is not None else previous.get("vision")),
                 "gestures": (perception.gestures if perception and perception.gestures is not None else previous.get("gestures")),
                 "sensors": (perception.sensors if perception and perception.sensors is not None else previous.get("sensors")),
@@ -1106,6 +1111,11 @@ class BrainRuntime:
             sensors=p.sensors,
             gestures=p.gestures,
             vision_desc=p.vision_desc,
+            vision_desc_ts_ms=p.vision_desc_ts_ms,
+            vision_desc_latency_ms=p.vision_desc_latency_ms,
+            vision_desc_event=p.vision_desc_event,
+            vision_desc_age_ms=p.vision_desc_age_ms,
+            vlm_queue=p.vlm_queue,
             summary=summary,
             motion_detected=p.motion_detected
         )

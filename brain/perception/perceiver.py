@@ -13,6 +13,7 @@ from typing import Any
 
 from brain.config import BrainConfig
 from brain.perception.camera import Camera
+from brain.perception.frame_buffer import PriorityFrameQueue, TimestampedFrame, VLMFrameCandidate, now_ms
 from brain.perception.gesture import GestureDetector
 from brain.vision.vlm_client import VLMClient, FallbackVLMClient, build_vlm
 from brain.types import PerceptionState
@@ -36,15 +37,31 @@ class UnifiedPerceiver:
         self._cached_motion_detected = False
         self._cached_gestures: dict | None = None
         self._cached_vision_desc: str | None = None
+        self._cached_vision_desc_ts_ms: int | None = None
+        self._cached_vision_desc_latency_ms: int | None = None
+        self._cached_vision_desc_event: str | None = None
+        self._cached_vision_desc_priority: int | None = None
         self._cached_vision_data: dict | None = None
         self._cached_face: dict | None = None
         self._cached_pose: dict | None = None
+        self._cached_scene_change_score = 0.0
         self._last_motion_ts = 0.0
         self._last_gesture_ts = 0.0
         self._last_face_ts = 0.0
         self._last_pose_ts = 0.0
+        self._last_vlm_enqueue_ts = 0.0
+        self._last_motion_burst_enqueue_ts = 0.0
+        self._prev_motion = False
+        self._prev_face_present = False
+        self._prev_gesture_present = False
         self._vlm_lock = threading.Lock()
         self._vlm_inflight = False
+        self._vlm_queue = PriorityFrameQueue(
+            maxsize=getattr(cfg, "perf_vlm_queue_size", 8),
+            max_age_ms=getattr(cfg, "perf_vlm_max_frame_age_ms", 10000),
+        )
+        self._vlm_worker_thread: threading.Thread | None = None
+        self._vlm_worker_stop = threading.Event()
         
         if cfg.gesture_detection_enabled:
             # We assume camera is needed if gesture is enabled, or if we want vision features later
@@ -52,10 +69,24 @@ class UnifiedPerceiver:
             # Parse configured resolution if needed, but Camera defaults are usually fine for Pi Camera
             # We could parse "640x480" from cfg.camera_resolution
             width, height = self._parse_resolution(getattr(cfg, "perf_resolution", None) or cfg.camera_resolution)
+            buffer_seconds = getattr(cfg, "perf_frame_buffer_seconds", 5.0)
+            max_buffer_frames = getattr(cfg, "perf_frame_buffer_max_frames", 300)
             if width and height:
-                self.camera = Camera(index=0, width=width, height=height, fps=cfg.camera_fps)
+                self.camera = Camera(
+                    index=0,
+                    width=width,
+                    height=height,
+                    fps=cfg.camera_fps,
+                    buffer_seconds=buffer_seconds,
+                    max_buffer_frames=max_buffer_frames,
+                )
             else:
-                self.camera = Camera(index=0, fps=cfg.camera_fps)
+                self.camera = Camera(
+                    index=0,
+                    fps=cfg.camera_fps,
+                    buffer_seconds=buffer_seconds,
+                    max_buffer_frames=max_buffer_frames,
+                )
             self.gesture = GestureDetector()
         
         self.vlm = build_vlm(cfg)
@@ -69,12 +100,22 @@ class UnifiedPerceiver:
             return 3.0   # was 8s — cloud can handle faster
         return 1.0       # was 2s — cloud can handle faster
 
-    def _run_vlm_request(self, image_bytes: bytes, prompt: str, *, blocking: bool) -> str | None:
+    def _run_vlm_request(
+        self,
+        image_bytes: bytes,
+        prompt: str,
+        *,
+        blocking: bool,
+        frame_ts_ms: int | None = None,
+        event_type: str = "manual",
+        priority: int = 100,
+    ) -> str | None:
         acquired = self._vlm_lock.acquire(blocking=blocking)
         if not acquired:
             return self._cached_vision_desc
 
         self._vlm_inflight = True
+        started = time.monotonic()
         try:
             desc = self.vlm.analyze_image(
                 model=self.cfg.vlm_model,
@@ -82,8 +123,13 @@ class UnifiedPerceiver:
                 prompt=prompt,
                 device=self.cfg.vlm_device,
             )
+            latency_ms = int((time.monotonic() - started) * 1000)
             if isinstance(desc, str) and desc.strip():
                 self._cached_vision_desc = desc.strip()
+                self._cached_vision_desc_ts_ms = int(frame_ts_ms or now_ms())
+                self._cached_vision_desc_latency_ms = latency_ms
+                self._cached_vision_desc_event = str(event_type or "manual")
+                self._cached_vision_desc_priority = int(priority)
             self.last_vlm_ts = time.time()
             return self._cached_vision_desc
         finally:
@@ -93,7 +139,43 @@ class UnifiedPerceiver:
             except RuntimeError:
                 pass
 
-    def _schedule_vlm_request(self, image_bytes: bytes, prompt: str, force: bool = False) -> None:
+    def _ensure_vlm_worker(self) -> None:
+        if self._vlm_worker_thread is not None and self._vlm_worker_thread.is_alive():
+            return
+        self._vlm_worker_stop.clear()
+        self._vlm_worker_thread = threading.Thread(target=self._vlm_worker_loop, daemon=True)
+        self._vlm_worker_thread.start()
+
+    def _vlm_worker_loop(self) -> None:
+        while not self._vlm_worker_stop.is_set():
+            candidate = self._vlm_queue.pop()
+            if candidate is None:
+                self._vlm_worker_stop.wait(0.05)
+                continue
+            if candidate.is_stale(now_ms(), self._vlm_queue.max_age_ms):
+                continue
+            try:
+                self._run_vlm_request(
+                    candidate.image_bytes,
+                    candidate.prompt,
+                    blocking=True,
+                    frame_ts_ms=candidate.frame_ts_ms,
+                    event_type=candidate.event_type,
+                    priority=candidate.priority,
+                )
+            except Exception as inner_e:
+                logging.error(f"VLM analysis queued worker failed: {inner_e}")
+
+    def _schedule_vlm_request(
+        self,
+        image_bytes: bytes,
+        prompt: str,
+        force: bool = False,
+        *,
+        frame_ts_ms: int | None = None,
+        priority: int = 20,
+        event_type: str = "idle",
+    ) -> None:
         now = time.time()
         interval = self._vlm_interval_s()
         
@@ -102,18 +184,19 @@ class UnifiedPerceiver:
             interval = 10.0 # Scan every 10s if static
             
         # If forced (e.g. sudden motion or direct request), bypass interval
-        if self._vlm_inflight or (not force and (now - self.last_vlm_ts) < interval):
+        if not force and (now - self._last_vlm_enqueue_ts) < interval:
             return
-            
-        self.last_vlm_ts = now
 
-        def fetch_vlm() -> None:
-            try:
-                self._run_vlm_request(image_bytes, prompt, blocking=False)
-            except Exception as inner_e:
-                logging.error(f"VLM analysis threaded failed: {inner_e}")
-
-        threading.Thread(target=fetch_vlm, daemon=True).start()
+        candidate = VLMFrameCandidate(
+            priority=int(priority),
+            frame_ts_ms=int(frame_ts_ms or now_ms()),
+            image_bytes=image_bytes,
+            prompt=prompt,
+            event_type=str(event_type or "idle"),
+        )
+        if self._vlm_queue.push(candidate):
+            self._last_vlm_enqueue_ts = now
+            self._ensure_vlm_worker()
 
     @staticmethod
     def _parse_resolution(res: str | None) -> tuple[int | None, int | None]:
@@ -141,6 +224,40 @@ class UnifiedPerceiver:
         if self.camera:
             self.camera.start()
 
+    def _latest_frame_record(self) -> TimestampedFrame | None:
+        if not self.camera:
+            return None
+        get_info = getattr(self.camera, "get_latest_frame_info", None)
+        if callable(get_info):
+            record = get_info()
+            if record is not None:
+                return record
+        frame = self.camera.get_latest_frame()
+        if frame is None:
+            return None
+        return TimestampedFrame(ts_ms=now_ms(), frame_index=-1, frame=frame)
+
+    def _keyframes_around(
+        self,
+        frame_record: TimestampedFrame,
+        *,
+        before_ms: int = 700,
+        after_ms: int = 0,
+        max_frames: int = 3,
+    ) -> list[TimestampedFrame]:
+        if self.camera:
+            get_keyframes = getattr(self.camera, "get_keyframes_around", None)
+            if callable(get_keyframes):
+                records = get_keyframes(
+                    frame_record.ts_ms,
+                    before_ms=before_ms,
+                    after_ms=after_ms,
+                    max_frames=max_frames,
+                )
+                if records:
+                    return records
+        return [frame_record]
+
     def _prepare_vlm_frame(self, frame, scale=0.5):
         if not CV2_AVAILABLE or frame is None or not hasattr(frame, "shape"):
             return frame
@@ -152,7 +269,11 @@ class UnifiedPerceiver:
             
         # Use provided scale if it's smaller than auto-scale
         max_edge = max(height, width)
-        target_edge = 384 if "qwen" in str(getattr(self.cfg, "vlm_model", "") or "").lower() else 512
+        model_name = str(getattr(self.cfg, "vlm_model", "") or "").lower()
+        if scale >= 1.0:
+            target_edge = 720
+        else:
+            target_edge = 384 if "qwen" in model_name else 512
         auto_scale = float(target_edge) / float(max_edge) if max_edge > target_edge else 1.0
         
         final_scale = min(scale, auto_scale)
@@ -166,6 +287,173 @@ class UnifiedPerceiver:
         except Exception:
             return frame
 
+    def _encode_vlm_frame(self, frame: Any, *, scale: float = 0.5) -> bytes | None:
+        if not CV2_AVAILABLE or frame is None:
+            return None
+        try:
+            prepared = self._prepare_vlm_frame(frame, scale=scale)
+            ret, jpg = cv2.imencode(".jpg", prepared, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+            if ret:
+                return jpg.tobytes()
+        except Exception as e:
+            logging.error(f"VLM frame encode failed: {e}")
+        return None
+
+    @staticmethod
+    def _vlm_world_prompt(event_type: str = "idle") -> str:
+        return (
+            f"Event: {event_type}. Provide a concise but detailed visual analysis for a robot brain. "
+            "Describe people, motion, gestures, facial expression, clothing colors, important objects, "
+            "visible text, and any safety-relevant change. Do not infer beyond the image."
+        )
+
+    @staticmethod
+    def _is_direct_visual_request(text: str | None) -> bool:
+        if not isinstance(text, str) or not text.strip():
+            return False
+        lowered = text.lower()
+        keywords = (
+            "see", "look", "camera", "vision", "image", "picture",
+            "شايف", "شوف", "بص", "كاميرا", "صورة", "قدامك", "مكتوب", "اقرا", "اقرأ",
+        )
+        return any(k in lowered for k in keywords)
+
+    def _queue_vlm_frame(
+        self,
+        frame_record: TimestampedFrame,
+        *,
+        event_type: str,
+        priority: int,
+        force: bool,
+        prompt: str | None = None,
+        scale: float = 0.5,
+    ) -> None:
+        jpeg_bytes = self._encode_vlm_frame(frame_record.frame, scale=scale)
+        if not jpeg_bytes:
+            return
+        self._schedule_vlm_request(
+            jpeg_bytes,
+            prompt or self._vlm_world_prompt(event_type),
+            force=force,
+            frame_ts_ms=frame_record.ts_ms,
+            priority=priority,
+            event_type=event_type,
+        )
+
+    @staticmethod
+    def _has_person(vision_data: dict | None) -> bool:
+        if not isinstance(vision_data, dict):
+            return False
+        face = vision_data.get("face")
+        if isinstance(face, dict) and face.get("person_present"):
+            return True
+        return bool(face)
+
+    @staticmethod
+    def _has_gesture(gestures_data: dict | None) -> bool:
+        if not isinstance(gestures_data, dict):
+            return False
+        if not gestures_data:
+            return False
+        if gestures_data.get("gesture"):
+            return True
+        if gestures_data.get("gesture_type"):
+            return True
+        return any(value for value in gestures_data.values())
+
+    def _schedule_vlm_events(
+        self,
+        frame_record: TimestampedFrame,
+        *,
+        text: str | None,
+        motion_detected: bool,
+        scene_change_score: float,
+        vision_data: dict | None,
+        gestures_data: dict | None,
+    ) -> None:
+        direct = self._is_direct_visual_request(text)
+        motion_started = bool(motion_detected) and not self._prev_motion
+        motion_stopped = not bool(motion_detected) and self._prev_motion
+        scene_changed = scene_change_score >= 0.08
+        person_present = self._has_person(vision_data)
+        person_entered = person_present and not self._prev_face_present
+        gesture_present = self._has_gesture(gestures_data)
+        gesture_started = gesture_present and not self._prev_gesture_present
+
+        if direct:
+            self._queue_vlm_frame(
+                frame_record,
+                event_type="direct_question",
+                priority=100,
+                force=True,
+                scale=1.0,
+            )
+        elif motion_started:
+            records = self._keyframes_around(frame_record, before_ms=700, after_ms=0, max_frames=2)
+            for record in records:
+                is_current = abs(record.ts_ms - frame_record.ts_ms) <= 80
+                self._queue_vlm_frame(
+                    record,
+                    event_type="motion_start" if is_current else "motion_pre",
+                    priority=95 if is_current else 85,
+                    force=True,
+                    scale=0.5,
+                )
+            self._last_motion_burst_enqueue_ts = time.time()
+        elif motion_detected and (time.time() - self._last_motion_burst_enqueue_ts) >= 1.0:
+            self._queue_vlm_frame(
+                frame_record,
+                event_type="motion_mid",
+                priority=70,
+                force=True,
+                scale=0.5,
+            )
+            self._last_motion_burst_enqueue_ts = time.time()
+        elif motion_stopped:
+            self._queue_vlm_frame(
+                frame_record,
+                event_type="motion_end",
+                priority=70,
+                force=True,
+                scale=0.5,
+            )
+        elif scene_changed:
+            self._queue_vlm_frame(
+                frame_record,
+                event_type="scene_change",
+                priority=85,
+                force=True,
+                scale=0.5,
+            )
+        elif person_entered:
+            self._queue_vlm_frame(
+                frame_record,
+                event_type="person_entered",
+                priority=80,
+                force=True,
+                scale=0.5,
+            )
+        elif gesture_started:
+            self._queue_vlm_frame(
+                frame_record,
+                event_type="gesture",
+                priority=75,
+                force=True,
+                scale=0.5,
+            )
+        else:
+            self._queue_vlm_frame(
+                frame_record,
+                event_type="idle",
+                priority=20,
+                force=False,
+                scale=0.5,
+            )
+
+        self._prev_motion = bool(motion_detected)
+        self._prev_face_present = bool(person_present)
+        self._prev_gesture_present = bool(gesture_present)
+
     def describe_now(self, prompt: str | None = None, level: int = 2) -> str | None:
         """
         Level 1: General fast description.
@@ -173,17 +461,15 @@ class UnifiedPerceiver:
         """
         if not self.camera or not CV2_AVAILABLE:
             return self._cached_vision_desc
-        frame = self.camera.get_latest_frame()
-        if frame is None:
+        frame_record = self._latest_frame_record()
+        if frame_record is None:
             return self._cached_vision_desc
             
         try:
             # Scale based on level (Level 2 uses higher res if possible)
             scale = 1.0 if level >= 2 else 0.5
-            prepared = self._prepare_vlm_frame(frame, scale=scale)
-            
-            ret, jpg = cv2.imencode(".jpg", prepared)
-            if not ret:
+            jpg = self._encode_vlm_frame(frame_record.frame, scale=scale)
+            if not jpg:
                 return self._cached_vision_desc
                 
             default_prompt = (
@@ -192,9 +478,12 @@ class UnifiedPerceiver:
             )
             
             desc = self._run_vlm_request(
-                jpg.tobytes(),
+                jpg,
                 prompt or default_prompt,
                 blocking=True,
+                frame_ts_ms=frame_record.ts_ms,
+                event_type="direct_describe",
+                priority=100,
             )
             return desc if desc else self._cached_vision_desc
         except Exception as e:
@@ -216,6 +505,9 @@ class UnifiedPerceiver:
             return None
 
     def stop(self):
+        self._vlm_worker_stop.set()
+        if self._vlm_worker_thread is not None and self._vlm_worker_thread.is_alive():
+            self._vlm_worker_thread.join(timeout=1.0)
         if self.camera:
             self.camera.stop()
         if self.gesture and hasattr(self.gesture, "close"):
@@ -942,14 +1234,16 @@ class UnifiedPerceiver:
         gestures_data = self._cached_gestures
         vision_desc = self._cached_vision_desc
         motion_detected = self._cached_motion_detected
+        scene_change_score = self._cached_scene_change_score
         
         if not run_vision or not CV2_AVAILABLE:
             self.prev_gray = None
 
         if self.camera and run_vision:
 
-            frame = self.camera.get_latest_frame()
-            if frame is None:
+            frame_record = self._latest_frame_record()
+            frame = frame_record.frame if frame_record is not None else None
+            if frame_record is None:
                 self.prev_gray = None
 
             if frame is not None:
@@ -984,12 +1278,17 @@ class UnifiedPerceiver:
                             gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
                             motion_detected = False
+                            scene_change_score = 0.0
                             if self.prev_gray is None:
                                 self.prev_gray = gray
                             else:
                                 frame_delta = cv2.absdiff(self.prev_gray, gray)
                                 thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
                                 thresh = cv2.dilate(thresh, None, iterations=2)
+                                try:
+                                    scene_change_score = float(cv2.countNonZero(thresh)) / float(thresh.size or 1)
+                                except Exception:
+                                    scene_change_score = 0.0
                                 contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                                 for c in contours:
                                     if cv2.contourArea(c) < 500:
@@ -999,8 +1298,10 @@ class UnifiedPerceiver:
                                 self.prev_gray = gray
                         except Exception:
                             motion_detected = False
+                            scene_change_score = 0.0
                             self.prev_gray = None
                         self._cached_motion_detected = bool(motion_detected)
+                        self._cached_scene_change_score = float(scene_change_score)
                         # Only update motion timestamp when motion is actually detected
                         if motion_detected:
                             self._last_motion_ts = now
@@ -1050,27 +1351,28 @@ class UnifiedPerceiver:
                         vision_data = None
                     self._cached_vision_data = vision_data
 
-                if CV2_AVAILABLE and run_vlm:
+                if not do_process:
+                    motion_detected = self._cached_motion_detected
+                    scene_change_score = self._cached_scene_change_score
+
+                if CV2_AVAILABLE and run_vlm and frame_record is not None:
                     try:
-                        prepared = self._prepare_vlm_frame(frame)
-                        ret, jpg = cv2.imencode(".jpg", prepared)
-                        if ret:
-                            # If motion just started, FORCE a VLM scan now!
-                            force_scan = motion_detected and not getattr(self, "_prev_motion", False)
-                            self._prev_motion = motion_detected
-                            
-                            self._schedule_vlm_request(
-                                jpg.tobytes(),
-                                "Provide an exhaustive, unrestricted, and highly detailed analysis of this image: Describe the person's facial expressions, micro-expressions, and emotional state in depth; detail their clothing colors, textures, and any visible logos/text; describe the entire environment including background objects and lighting; and perform a deep OCR scan to transcribe every visible letter, number, or symbol no matter how small, to create a complete world-model for an AI brain.",
-                                force=force_scan
-                            )
+                        self._schedule_vlm_events(
+                            frame_record,
+                            text=text,
+                            motion_detected=bool(motion_detected),
+                            scene_change_score=float(scene_change_score),
+                            vision_data=vision_data if run_gesture else None,
+                            gestures_data=gestures_data if run_gesture else None,
+                        )
                     except Exception as e:
                         logging.error(f"VLM analysis schedule failed: {e}")
                         vision_desc = self._cached_vision_desc
-                        # vlm prompt tuned                                                                                           
-                if not do_process:
-                    motion_detected = self._cached_motion_detected
-
+                        # vlm prompt tuned
+                elif frame_record is not None:
+                    self._prev_motion = bool(motion_detected)
+                    self._prev_face_present = self._has_person(vision_data if run_gesture else None)
+                    self._prev_gesture_present = self._has_gesture(gestures_data if run_gesture else None)
 
         if not run_gesture:
             gestures_data = None
@@ -1081,13 +1383,21 @@ class UnifiedPerceiver:
             vision_data = None
             motion_detected = False
 
-
+        out_ts_ms = int(time.time() * 1000)
+        desc_ts_ms = self._cached_vision_desc_ts_ms if vision_desc else None
+        desc_age_ms = (out_ts_ms - desc_ts_ms) if desc_ts_ms is not None else None
+        
         return PerceptionState(
-            ts_ms=int(time.time() * 1000),
+            ts_ms=out_ts_ms,
             text=text,
             vision=vision_data,
             sensors=sensors,
             gestures=gestures_data,
-            vision_desc=self._cached_vision_desc, # We pull the desc from cache as it populates in background
+            vision_desc=vision_desc,
+            vision_desc_ts_ms=desc_ts_ms,
+            vision_desc_latency_ms=self._cached_vision_desc_latency_ms if vision_desc else None,
+            vision_desc_event=self._cached_vision_desc_event if vision_desc else None,
+            vision_desc_age_ms=desc_age_ms,
+            vlm_queue=self._vlm_queue.stats(),
             motion_detected=motion_detected,
         )

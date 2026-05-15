@@ -19,6 +19,8 @@ class QwenAnalysis:
     timestamp_ms: int
     text: str
     latency_ms: int
+    completed_ts_ms: int | None = None
+    frame_age_ms: int | None = None
     error: str | None = None
 
 class QwenExpertPool:
@@ -106,8 +108,15 @@ class QwenExpertPool:
                 await asyncio.sleep(worker_id * self.cadence_s)
 
                 while self._wake_event.is_set() and self._is_running:
-                    # 1. Capture frame
-                    frame = self.camera.get_latest_frame()
+                    # 1. Capture frame with its original camera timestamp when available.
+                    frame_ts_ms = int(time.time() * 1000)
+                    get_info = getattr(self.camera, "get_latest_frame_info", None)
+                    if callable(get_info):
+                        record = get_info()
+                        frame = getattr(record, "frame", None) if record is not None else None
+                        frame_ts_ms = int(getattr(record, "ts_ms", frame_ts_ms)) if record is not None else frame_ts_ms
+                    else:
+                        frame = self.camera.get_latest_frame()
                     if frame is None:
                         await asyncio.sleep(0.1)
                         continue
@@ -131,9 +140,11 @@ class QwenExpertPool:
                         
                         analysis = QwenAnalysis(
                             worker_id=worker_id,
-                            timestamp_ms=int(time.time() * 1000),
+                            timestamp_ms=frame_ts_ms,
                             text=analysis_text,
                             latency_ms=latency_ms,
+                            completed_ts_ms=int(time.time() * 1000),
+                            frame_age_ms=max(0, int(time.time() * 1000) - frame_ts_ms),
                         )
                         logger.info(f"Worker {worker_id}: analysis ready in {latency_ms}ms")
                         

@@ -55,6 +55,11 @@ class PerceptionState:
     sensors: dict[str, Any] | None = None
     gestures: dict[str, Any] | None = None
     vision_desc: str | None = None
+    vision_desc_ts_ms: int | None = None
+    vision_desc_latency_ms: int | None = None
+    vision_desc_event: str | None = None
+    vision_desc_age_ms: int | None = None
+    vlm_queue: dict[str, Any] | None = None
     summary: str | None = None
     motion_detected: bool = False
 

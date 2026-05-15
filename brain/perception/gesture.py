@@ -70,7 +70,7 @@ class GestureDetector:
                 self.mp_hands = mp.solutions.hands
                 self._hands = self.mp_hands.Hands(
                     static_image_mode=False,
-                    max_num_hands=1,
+                    max_num_hands=2,
                     min_detection_confidence=0.5,
                     min_tracking_confidence=0.5
                 )
@@ -85,7 +85,7 @@ class GestureDetector:
             hand_model = os.path.join(model_dir, "hand_landmarker.task")
             _ensure_model(hand_model, "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task")
             base = mp_python.BaseOptions(model_asset_path=hand_model)
-            opts = mp_vision.HandLandmarkerOptions(base_options=base, num_hands=1)
+            opts = mp_vision.HandLandmarkerOptions(base_options=base, num_hands=2)
             self._tasks_hand = mp_vision.HandLandmarker.create_from_options(opts)
             self._mp_vision = mp_vision
             return self._tasks_hand

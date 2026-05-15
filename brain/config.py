@@ -98,8 +98,12 @@ class BrainConfig:
     perf_frame_skip: int = 1  # process every frame (cloud VLM handles the load)
     perf_mediapipe_schedule: tuple[str, ...] = ("face", "hands", "pose")  # Removed "idle" for faster processing
     perf_resolution: str = "640x480"
+    perf_frame_buffer_seconds: float = 5.0
+    perf_frame_buffer_max_frames: int = 300
     perf_audio_window_ms: int = 250
     perf_audio_period_ms: int = 1000
+    perf_vlm_queue_size: int = 8
+    perf_vlm_max_frame_age_ms: int = 10000
     perf_vlm_on_transition: bool = True
     perf_vlm_on_scene_change: bool = True
     perf_vlm_on_ambiguous: bool = True
@@ -232,8 +236,12 @@ class BrainConfig:
             perf_frame_skip=BrainConfig._parse_int("PERF_FRAME_SKIP", 1, min_v=0, max_v=10),
             perf_mediapipe_schedule=tuple(x.strip() for x in os.getenv("PERF_MEDIAPIPE_SCHEDULE", "face,hands,pose,idle").split(",") if x.strip()),
             perf_resolution=os.getenv("PERF_RESOLUTION", "640x480"),
+            perf_frame_buffer_seconds=BrainConfig._parse_float("PERF_FRAME_BUFFER_SECONDS", 5.0, min_v=1.0, max_v=10.0),
+            perf_frame_buffer_max_frames=BrainConfig._parse_int("PERF_FRAME_BUFFER_MAX_FRAMES", 300, min_v=30, max_v=900),
             perf_audio_window_ms=BrainConfig._parse_int("PERF_AUDIO_WINDOW_MS", 250, min_v=50, max_v=1000),
             perf_audio_period_ms=BrainConfig._parse_int("PERF_AUDIO_PERIOD_MS", 1000, min_v=200, max_v=5000),
+            perf_vlm_queue_size=BrainConfig._parse_int("PERF_VLM_QUEUE_SIZE", 8, min_v=1, max_v=64),
+            perf_vlm_max_frame_age_ms=BrainConfig._parse_int("PERF_VLM_MAX_FRAME_AGE_MS", 10000, min_v=1000, max_v=60000),
             perf_vlm_on_transition=os.getenv("PERF_VLM_ON_TRANSITION", "true").lower() in ("1", "true", "yes", "on"),
             perf_vlm_on_scene_change=os.getenv("PERF_VLM_ON_SCENE_CHANGE", "true").lower() in ("1", "true", "yes", "on"),
             perf_vlm_on_ambiguous=os.getenv("PERF_VLM_ON_AMBIGUOUS", "true").lower() in ("1", "true", "yes", "on"),
