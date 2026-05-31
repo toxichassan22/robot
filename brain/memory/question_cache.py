@@ -178,7 +178,7 @@ class QuestionCache:
             union = q_words | file_words
             similarity = len(intersection) / len(union) if union else 0
 
-            if similarity > 0.6 and similarity > best_overlap:
+            if similarity > 0.4 and similarity > best_overlap:
                 try:
                     with open(fpath, "r", encoding="utf-8") as f:
                         data = json.load(f)

@@ -33,7 +33,6 @@ except Exception:
     pass
 
 import httpx  # type: ignore
-import sys
 from brain.config import BrainConfig
 from brain.cognition.planner import build_planner
 from brain.cognition.wakeword_gate import WakeWordGate
