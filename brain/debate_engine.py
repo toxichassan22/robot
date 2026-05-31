@@ -68,7 +68,7 @@ class DebateEngine:
     ):
         loaded_model_config, loaded_search_settings = _load_search_configuration()
         self.models = models if models is not None else ALL_MODELS
-        self.rounds = 5
+        self.rounds = 4  # Round 0 (search) + Round 1 (independent) + Round 2 (review) + Round 3 (synthesis)
         self.current_logs = []
         self.model_search_config = copy.deepcopy(model_search_config) if model_search_config is not None else loaded_model_config
         self.search_settings = {**loaded_search_settings, **(copy.deepcopy(search_settings) if search_settings is not None else {})}
@@ -81,7 +81,7 @@ class DebateEngine:
 
     def _add_log(self, message: str):
         # We use print for terminal visibility while keeping logs for the JSON file
-        if any(marker in message for marker in ["=== ROUND", "🚀 Starting", "🧠 [DeepSeek Synthesis]"]):
+        if any(marker in message for marker in ["=== ROUND", "=== FINAL ROUND", "🚀 Starting", "🧠 [Kimi Synthesis]"]):
             print(f"\n[THINKING] {message}", flush=True)
         elif "✅" in message or "⚠️" in message or "⏭️" in message:
              print(f"  {message}", flush=True)
@@ -96,13 +96,13 @@ class DebateEngine:
         except Exception as e:
             logger.error(f"Failed to write debate state: {e}")
 
-    async def run_round_0_search(self, query: str, vision_context: str) -> Dict[str, str]:
+    async def run_round_0_search(self, query: str, vision_context: str = "") -> Dict[str, str]:
         """
         Round 0: Agentic RAG.
         Each model gathers information from its configured web-wide search mix, then the
         pooled findings are shared with all models in Round 1.
         """
-        del vision_context
+        _ = vision_context  # reserved for future per-model context injection
         if not self.search_settings.get("enable_round_0", True):
             self._add_log("=== ROUND 0: Distributed Search disabled by config ===")
             return {}
@@ -191,7 +191,7 @@ class DebateEngine:
                 if findings and not findings.startswith("[Search failed"):
                     search_text += f"\n[{model_name}] found:\n{findings}\n"
 
-        system_prompt = f"""You are participating in a 6-round Multi-Agent Debate.
+        system_prompt = f"""You are participating in a 4-round Multi-Agent Debate.
         ROUND 1 RULES:
         - Think independently about the answer and reasoning.
         - You MAY use the pooled Round 0 research collected collaboratively by all models.
@@ -229,7 +229,7 @@ class DebateEngine:
         
         history_text = "\n\n".join([f"[{name}] said:\n{resp}" for name, resp in previous_outputs.items()])
         
-        system_prompt = f"""You are in Round {round_num} of a 6-round Debate.
+        system_prompt = f"""You are in Round {round_num} of a 4-round Debate.
         Read the following answers from the previous round.
         Identify agreements ✓, disagreements ✗, and missed points ⚠️.
         Update your answer. State what changed and WHY. Update confidence.
@@ -256,12 +256,12 @@ class DebateEngine:
         return round_outputs
 
     async def run_synthesis(self, round_outputs: Dict[str, str]) -> str:
-        self._add_log("=== ROUND 3: Final Synthesis (DeepSeek Only) ===")
-        
+        self._add_log("=== FINAL ROUND: Synthesis (Kimi Only) ===")
+
         history_text = "\n\n".join([f"[{name}] final stance:\n{resp}" for name, resp in round_outputs.items()])
-        
-        system_prompt = f"""You are the Final Synthesizer. Round 3.
-        Collect all final answers from Round 2. Identify core consensus.
+
+        system_prompt = f"""You are the Final Synthesizer.
+        Collect all final answers from the review round. Identify core consensus.
         Build ONE final unified answer. Resolving any disagreements.
         
         CRITICAL RULES:
@@ -272,18 +272,19 @@ class DebateEngine:
         
         5. Use Arabic diacritics (tashkeel) on important or potentially mispronounced words to guide the TTS system.
         
-        FINAL ROUND 2 RESPONSES:
+        FINAL REVIEW ROUND RESPONSES:
         {history_text}
         """
         
         try:
-            from brain.models import deepseek
-            result = await deepseek.generate("Synthesize the final response.", system_prompt)
-            self._add_log(f"🧠 [DeepSeek Synthesis] Final Decision:\n{result}")
+            from brain.models import get_deepseek
+            synthesizer = get_deepseek()
+            result = await synthesizer.generate("Synthesize the final response.", system_prompt)
+            self._add_log(f"🧠 [Kimi Synthesis] Final Decision:\n{result}")
             return result
         except Exception as e:
-            logger.error(f"DeepSeek failed synthesis: {e}")
-            self._add_log(f"❌ [DeepSeek Synthesis] FAILED: {e}")
+            logger.error(f"Kimi failed synthesis: {e}")
+            self._add_log(f"❌ [Kimi Synthesis] FAILED: {e}")
             return "<spoken_response>عذراً، حدث خطأ في النظام العقلي أثناء تجميع الإجابة.</spoken_response>"
 
     async def _safe_generate(self, model, prompt, system_prompt):

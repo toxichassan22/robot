@@ -284,8 +284,9 @@ class BrainRuntime:
 
     def _is_visual_question(self, text: str) -> bool:
         visual_kws = [
-            "شايف", "لابس", "اقرا", "اقرأ", "مكتوب", "قدامك", "ولد ولا بنت", "بنت ولا ولد", "شكلي", 
-            "روشتة", "روشته", "ورقة", "ورقه", "معايا إيه", "معايا ايه", "إيه ده", "ايه ده", "كده", "كدا", "دي", "ده"
+            "شايف", "لابس", "اقرا", "اقرأ", "مكتوب", "قدامك", "ولد ولا بنت", "بنت ولا ولد", "شكلي",
+            "روشتة", "روشته", "ورقة", "ورقه", "معايا إيه", "معايا ايه", "إيه ده", "ايه ده",
+            "الكاميرا", "الكاميرا بتاعتي", "صورة", "صوره"
         ]
         return any(k in text.lower() for k in visual_kws)
 
@@ -354,7 +355,7 @@ class BrainRuntime:
         
         try:
             # We can reuse the chat_archiver's LLM runner since it's already configured
-            result = await self.chat_archiver._run_llm(system, user_text)
+            result = await self.chat_archiver.run_llm(system, user_text)
             response = str(result).strip().upper()
             return "YES" in response
         except Exception:
@@ -369,7 +370,7 @@ class BrainRuntime:
 
     async def _log_safety_event(self, event_type: str, reason: str, original: dict, safe: dict) -> None:
         try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
+            async with httpx.AsyncClient(timeout=3.0) as client:
                 await client.post(
                     "http://localhost:8000/api/safety-events",
                     json={
@@ -839,24 +840,20 @@ class BrainRuntime:
         
         # Give some time for camera to warm up
         await asyncio.sleep(2.0)
-        
+
+        _last_sensor_poll = 0.0
+        _SENSOR_POLL_INTERVAL = 1.0  # seconds
+
         try:
             while True:
                 # 1. Sense Environment
-                # Poll sensors from ESP32 occasionally (e.g., every 500ms) or just assume fast enough serial
-                # Actually, serial poll might block if we wait for reply. Let's do it with timeout.
+                # Poll sensors from ESP32 every ~1 second to avoid blocking the vision loop.
                 sensors = {}
+                now = time.time()
                 try:
-                    # We might want to rate limit sensor polling specifically, but let's try every loop
-                    # If camera FPS is 15, we are looping ~66ms. Serial timeout 0.1s is risky.
-                    # Ideally we poll sensors in separate task or less frequently.
-                    # For now, let's skip polling in this loop to keep it fast for vision, 
-                    # OR we implement non-blocking sensor reading if ESP pushes data.
-                    # Current Esp32Client.poll_sensors sends request and waits.
-                    # Let's poll every 1 second.
-                    if int(time.time()) % 2 == 0: # crude 2s check
-                         # sensors = await self.esp32.poll_sensors(timeout_s=0.1)
-                         pass
+                    if now - _last_sensor_poll >= _SENSOR_POLL_INTERVAL:
+                        _last_sensor_poll = now
+                        sensors = await self.esp32.poll_sensors(timeout_s=0.1)
                 except Exception as e:
                     logging.error(f"Sensor poll failed: {e}")
 
@@ -885,9 +882,9 @@ class BrainRuntime:
                 if perception.gestures or perception.text:
                     await self.handle_perception(perception, print_events=True)
                 
-                # Rate limit loop (lowered from 0.2s to 0.01s for millisecond-level responsiveness)
-                await asyncio.sleep(0.01)
-                
+                # Rate limit loop — 50ms balances responsiveness vs CPU load
+                await asyncio.sleep(0.05)
+
         except asyncio.CancelledError:
             pass
         finally:

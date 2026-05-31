@@ -21,7 +21,7 @@ class TestRuntimeIntegration(unittest.IsolatedAsyncioTestCase):
              patch('brain.runtime.UnifiedPerceiver'), \
              patch('brain.perception.governed_perceiver.UnifiedPerceiver'), \
              patch('brain.runtime.AudioStream'), \
-             patch('brain.runtime.VoskSTT'), \
+             patch('brain.runtime.build_stt'), \
              patch('brain.runtime.build_tts'), \
              patch('brain.runtime.MotionPlanner'):
             

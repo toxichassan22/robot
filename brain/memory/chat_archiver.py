@@ -62,7 +62,7 @@ class ChatArchiver:
                 "Keep the summary short but highly informative."
             )
             
-            summary = await self._run_llm(system_prompt, full_chat)
+            summary = await self.run_llm(system_prompt, full_chat)
             
             if not summary or len(summary) < 10:
                 logger.warning("Compression yielded empty or very short summary. Aborting.")
@@ -95,7 +95,7 @@ class ChatArchiver:
         finally:
             self.is_compressing = False
             
-    async def _run_llm(self, system: str, user: str) -> str:
+    async def run_llm(self, system: str, user: str) -> str:
         # Try to use best available model for summarization
         try:
             if self.cfg.google_api_key:

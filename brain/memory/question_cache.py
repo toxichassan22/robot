@@ -14,7 +14,8 @@ Structure:
 Each file contains:
     {"answer": "...", "ts": 1234567890, "hits": 3}
 
-Lookup is O(1) — just check if the file exists by name.
+Lookup checks all topic folders for a matching filename — O(n) where n = number of topic folders.
+Exact match is fast (filesystem check); fuzzy fallback scans each folder's files.
 All models share this cache so none of them waste time re-answering known questions.
 """
 from __future__ import annotations

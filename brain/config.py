@@ -236,7 +236,7 @@ class BrainConfig:
             thermal_critical_threshold_c=float(os.getenv("THERMAL_CRITICAL_THRESHOLD_C", "80.0")),
             
             # Performance knobs
-            perf_frame_skip=BrainConfig._parse_int("PERF_FRAME_SKIP", 1, min_v=0, max_v=10),
+            perf_frame_skip=BrainConfig._parse_int("PERF_FRAME_SKIP", 1, min_v=1, max_v=10),
             perf_mediapipe_schedule=tuple(x.strip() for x in os.getenv("PERF_MEDIAPIPE_SCHEDULE", "face,hands,pose,idle").split(",") if x.strip()),
             perf_resolution=os.getenv("PERF_RESOLUTION", "640x480"),
             perf_frame_buffer_seconds=BrainConfig._parse_float("PERF_FRAME_BUFFER_SECONDS", 5.0, min_v=1.0, max_v=10.0),
