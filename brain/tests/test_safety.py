@@ -70,7 +70,7 @@ def test_status_endpoint():
         "last_heartbeat_ack_ms": now_ms - 100
     }
 
-    with patch("pi_5.web_ui_backend.core.get_state_manager", return_value=mock_state_manager):
+    with patch("brain.pi5.web_ui_backend.core.get_state_manager", return_value=mock_state_manager):
         response = client.get("/api/status")
         assert response.status_code == 200
         data = response.json()
@@ -86,7 +86,7 @@ def test_status_endpoint():
         "last_heartbeat_ack_ms": now_ms - 3000
     }
     
-    with patch("pi_5.web_ui_backend.core.get_state_manager", return_value=mock_state_manager):
+    with patch("brain.pi5.web_ui_backend.core.get_state_manager", return_value=mock_state_manager):
         response = client.get("/api/status")
         assert response.status_code == 200
         data = response.json()

@@ -105,10 +105,10 @@ OLLAMA_URL = os.getenv("OLLAMA_CLOUD_URL", "http://127.0.0.1:11434")
 # Set up the HuggingFace client with the automatic key manager
 from brain.pi5.web_ui_backend.routers.api_keys import _get_key_manager
 from brain.llm.huggingface_client import HuggingFaceClient
-hf_client = HuggingFaceClient(default_model="arcee-ai/trinity-large-thinking:free", key_manager=_get_key_manager())
+hf_client = HuggingFaceClient(default_model="moonshotai/kimi-k2.6:free", key_manager=_get_key_manager())
 
-# Main Brain Model (Trinity via OpenRouter)
-deepseek = HuggingFaceLLMWrapper("Trinity", "arcee-ai/trinity-large-thinking:free", hf_client)
+# Main Brain Model (Kimi 2.6 via OpenRouter)
+deepseek = HuggingFaceLLMWrapper("Kimi", "moonshotai/kimi-k2.6:free", hf_client)
 
 # Secondary Models (Ollama)
 minimax = LLMWrapper("Minimax", OLLAMA_URL, "minimax-m2.7:cloud", timeout=None)

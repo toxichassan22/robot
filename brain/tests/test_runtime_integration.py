@@ -17,7 +17,6 @@ class TestRuntimeIntegration(unittest.IsolatedAsyncioTestCase):
         # Patch heavily to avoid starting real threads/processes
         with patch('brain.runtime._load_robot_settings', return_value={}), \
              patch('brain.runtime.SqliteMemory'), \
-             patch('brain.runtime.FeedbackMemory'), \
              patch('brain.runtime.Esp32Client'), \
              patch('brain.runtime.UnifiedPerceiver'), \
              patch('brain.perception.governed_perceiver.UnifiedPerceiver'), \
