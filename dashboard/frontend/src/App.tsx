@@ -10,6 +10,7 @@ const SdLogicContent = lazy(() => import("./pages/SdLogic").then((module) => ({ 
 const SettingsContent = lazy(() => import("./pages/Settings").then((module) => ({ default: module.SettingsContent })));
 const MotionContent = lazy(() => import("./pages/Motion").then((module) => ({ default: module.MotionContent })));
 const TestZoneContent = lazy(() => import("./pages/TestZone").then((module) => ({ default: module.TestZoneContent })));
+const ChestDisplay = lazy(() => import("./pages/ChestDisplay").then((module) => ({ default: module.ChestDisplay })));
 
 function ShellLayout() {
   const location = useLocation();
@@ -38,6 +39,7 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
+      <Route path="/chest" element={<ChestDisplay />} />
       <Route element={<ShellLayout />}>
         <Route path="/console" element={<SdLogicContent />} />
         <Route path="/motion" element={<MotionContent />} />

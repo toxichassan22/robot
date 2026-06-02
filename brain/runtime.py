@@ -281,6 +281,48 @@ class BrainRuntime:
         except Exception:
             pass
 
+    def _publish_activity_event(
+        self,
+        phase: str,
+        title: str,
+        detail: str | None = None,
+        emotion: str | None = None,
+        source: str = "runtime",
+        severity: str = "info",
+        analysis: dict | None = None,
+        action: dict | None = None,
+    ) -> None:
+        try:
+            import asyncio
+            import uuid
+            from brain.activity.bus import get_activity_bus
+            from brain.activity.types import ChestActivityEvent
+            
+            event = ChestActivityEvent(
+                id=str(uuid.uuid4()),
+                tsMs=int(time.time() * 1000),
+                phase=phase,
+                source=source,
+                title=title,
+                detail=detail,
+                severity=severity,
+                emotion=emotion or phase,
+                analysis=analysis or {},
+                action=action or {},
+            )
+            bus = get_activity_bus()
+            
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    loop.create_task(bus.publish(event))
+                else:
+                    asyncio.run(bus.publish(event))
+            except RuntimeError:
+                asyncio.run(bus.publish(event))
+        except Exception as e:
+            logging.error(f"Failed to publish activity event: {e}")
+
     def _is_visual_question(self, text: str) -> bool:
         visual_kws = [
             "شايف", "لابس", "اقرا", "اقرأ", "مكتوب", "قدامك", "ولد ولا بنت", "بنت ولا ولد", "شكلي",
@@ -399,6 +441,8 @@ class BrainRuntime:
         tts_callback: callable | None = None
     ) -> None:
         raw_text = perception.text
+        if raw_text:
+            self._publish_activity_event(phase="listening", title="استماع للطلب الصوتي", detail=raw_text, source="runtime")
         decision = self.gate.on_perception(perception)
         
         # --- FORCE CHAT RESPONSE ---
@@ -500,6 +544,7 @@ class BrainRuntime:
         user_text = planned.text or ""
         
         if user_text.strip():
+            self._publish_activity_event(phase="thinking", title="تحليل وتصنيف السؤال", detail=user_text, source="runtime")
             # 1. Check Question Cache first (folder-based, instant lookup)
             # Only check cache for standalone questions (>2 words) to avoid false hits on contextual words like "كمل"
             cached_answer = None
@@ -522,6 +567,7 @@ class BrainRuntime:
                 
                 if is_simple or is_creative:
                     logging.info(f"Simple query '{user_text}', routing to single LLM")
+                    self._publish_activity_event(phase="analyzing", title="جاري التفكير وصياغة الإجابة", detail=user_text, source="planner")
                     
                     # --- DYNAMIC VISION READING ---
                     # IMPROVEMENT: Take the snapshot IMMEDIATELY to avoid the user moving their hand
@@ -546,6 +592,7 @@ class BrainRuntime:
                     action = await self._safe_await(self.planner.plan, planned)
                 else:
                     logging.info(f"Complex query '{user_text}', routing to Debate Engine")
+                    self._publish_activity_event(phase="thinking", title="بدء جلسة مناظرة لتبادل الآراء", detail=user_text, source="debate")
                     # Retrieve past topic context
                     topic_context = ""
                     try:
@@ -655,7 +702,9 @@ class BrainRuntime:
         if tts_callback and action.kind == "say":
             txt = (action.payload or {}).get("text")
             if txt:
+                self._publish_activity_event(phase="speaking", title="جاري التحدث", detail=txt, source="tts")
                 await self._safe_await(tts_callback, txt)
+                self._publish_activity_event(phase="idle", title="جاهز للرد التالي", source="runtime")
 
         if action.kind == "set_state":
             mode = (action.payload or {}).get("mode")
@@ -676,12 +725,20 @@ class BrainRuntime:
                     await self._safe_await(tts_callback, f"تمام، هدوّن إن {key} هو {val}")
 
         elif action.kind in ("motion", "servo", "set_state") or action.kind not in ("say", "remember", "store_feedback"):
+            self._publish_activity_event(
+                phase="acting",
+                title=f"تنفيذ حركة: {action.kind}",
+                detail=str(action.payload),
+                source="planner",
+                action={"kind": action.kind, "payload": action.payload}
+            )
             if action.kind == "motion" and tts_callback:
                 d = str((action.payload or {}).get("direction") or "").strip().lower()
                 ack = {"forward": "تمام، لقدام.", "backward": "تمام، لورا.", "left": "تمام، شمال.", "right": "تمام، يمين.", "stop": "تمام، وقفت."}.get(d)
                 if ack: await self._safe_await(tts_callback, ack)
             
             validation_result = await self._safe_await(self.safe_executor.execute, action)
+            self._publish_activity_event(phase="idle", title="جاهز للرد التالي", source="runtime")
             if validation_result and getattr(validation_result, 'was_modified', False):
                 print(json.dumps({
                     "event": "command_override", 

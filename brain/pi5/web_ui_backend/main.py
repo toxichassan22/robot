@@ -27,6 +27,7 @@ if not getattr(app.state, "web_ui_backend_initialized", False):
     from .routers import tts  # noqa: F401
     from .routers import camera # noqa: F401
     from .routers import api_keys  # noqa: F401
+    from .routers import chest  # noqa: F401
 
     if STATIC_DIR.exists():
         assets_dir = STATIC_DIR / "assets"

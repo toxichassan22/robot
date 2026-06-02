@@ -617,6 +617,9 @@ async def post_hearing_text(body: HearingTextBody):
     return {"success": False, "error": "Command queue not initialized"}
 
 
+from brain.activity.bus import get_activity_bus
+from brain.agent_tools.visual_browser import get_visual_browser
+
 __all__ = [
     "app",
     "AuthRequest",
@@ -664,4 +667,6 @@ __all__ = [
     "set_state_manager",
     "sessions",
     "try_parse_action",
+    "get_activity_bus",
+    "get_visual_browser",
 ]

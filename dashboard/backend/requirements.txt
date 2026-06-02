@@ -9,3 +9,4 @@ psutil>=5.9.8
 pytest
 pytest-asyncio
 edge-tts
+playwright>=1.45.0

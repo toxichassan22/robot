@@ -109,6 +109,43 @@ class DebateEngine:
 
         self._add_log("=== ROUND 0: Distributed Search (Agentic RAG) ===")
 
+        # Try visual browser first
+        visual_findings = None
+        browser_failed = False
+        try:
+            from brain.agent_tools.visual_browser import get_visual_browser
+            browser = get_visual_browser()
+            visual_findings = await browser.search(query)
+        except Exception as e:
+            logger.warning(f"Visual browser search failed, falling back to silent search: {e}")
+            browser_failed = True
+
+        if visual_findings:
+            self._add_log("🔍 Visual browser search completed successfully.")
+            search_results = {}
+            for model in self.models:
+                search_results[model.name] = visual_findings
+            return search_results
+
+        if browser_failed:
+            try:
+                from brain.activity.bus import get_activity_bus
+                from brain.activity.types import ChestActivityEvent
+                import uuid
+                import time
+                event = ChestActivityEvent(
+                    id=str(uuid.uuid4()),
+                    tsMs=int(time.time() * 1000),
+                    phase="searching",
+                    source="debate",
+                    title="استخدام البحث الصامت (الاحتياطي)",
+                    detail="فشل المتصفح المرئي، تم الانتقال للبحث الصامت.",
+                    severity="warning"
+                )
+                await get_activity_bus().publish(event)
+            except Exception:
+                pass
+
         tasks = []
         for model in self.models:
             config = self._get_search_config_for_model(model.name)
