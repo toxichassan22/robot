@@ -78,3 +78,16 @@ async def browser_frame_generator():
 @app.get("/api/chest/browser/stream")
 async def browser_stream():
     return StreamingResponse(browser_frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+from pydantic import BaseModel
+
+class ChestChatBody(BaseModel):
+    text: str
+
+@app.post("/api/chest/chat")
+async def post_chest_chat(body: ChestChatBody):
+    command_queue = core.get_command_queue()
+    if command_queue is not None:
+        await command_queue.put({"kind": "hearing", "payload": {"text": body.text}})
+        return {"success": True}
+    return {"success": False, "error": "command_queue_unavailable"}

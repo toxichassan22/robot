@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useChestActivity } from "../hooks/useChestActivity";
 import { EmotionAvatar } from "../components/chest/EmotionAvatar";
@@ -10,6 +10,11 @@ export function ChestDisplay() {
   const { events, status } = useChestActivity();
   const location = useLocation();
   const timelineEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Floating chat states
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatText, setChatText] = useState("");
+  const [sending, setSending] = useState(false);
 
   // Check for maintenance query param
   const query = new URLSearchParams(location.search);
@@ -24,6 +29,27 @@ export function ChestDisplay() {
       timelineEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [events]);
+
+  const handleSendChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatText.trim() || sending) return;
+    setSending(true);
+    try {
+      const res = await fetch("/api/chest/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: chatText }),
+      });
+      if (res.ok) {
+        setChatText("");
+        setChatOpen(false);
+      }
+    } catch (err) {
+      console.error("Failed to send chat:", err);
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none overflow-x-hidden">
@@ -162,6 +188,52 @@ export function ChestDisplay() {
           )}
         </div>
       </main>
+
+      {/* Floating Chat Input Widget */}
+      <div className="fixed bottom-6 right-6 z-[100] flex flex-col items-end gap-3 font-sans">
+        {chatOpen && (
+          <form
+            onSubmit={handleSendChat}
+            className="flex items-center gap-2 bg-slate-900/90 border border-slate-700/80 rounded-xl p-3 shadow-2xl backdrop-blur-xl w-80 md:w-96"
+          >
+            <input
+              type="text"
+              value={chatText}
+              onChange={(e) => setChatText(e.target.value)}
+              placeholder="اكتب سؤالك للروبوت هنا..."
+              disabled={sending}
+              className="flex-1 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500/80"
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={sending || !chatText.trim()}
+              className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-lg px-3 py-2 text-xs font-bold transition-all flex items-center justify-center min-w-[50px]"
+            >
+              {sending ? "..." : "إرسال"}
+            </button>
+          </form>
+        )}
+        <button
+          onClick={() => setChatOpen(!chatOpen)}
+          className={`flex items-center justify-center w-12 h-12 rounded-full shadow-2xl cursor-pointer transition-all duration-300 ${
+            chatOpen 
+              ? "bg-rose-600 hover:bg-rose-500 text-white rotate-90" 
+              : "bg-indigo-600 hover:bg-indigo-500 text-white hover:scale-105"
+          }`}
+          title="إرسال نص للروبوت"
+        >
+          {chatOpen ? (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
