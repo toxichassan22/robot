@@ -32,6 +32,9 @@ if exist "requirements.txt" (
     :: Run pip install. It will be very fast if everything is already installed.
     pip install -r requirements.txt --quiet
     echo Python dependencies are up to date!
+    
+    echo Installing Playwright Chromium browser binaries...
+    playwright install chromium
 ) else (
     echo No requirements.txt found in the root directory. Skipping.
 )

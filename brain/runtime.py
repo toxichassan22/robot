@@ -381,28 +381,43 @@ class BrainRuntime:
             )
         return best
 
+    def _needs_web_search(self, user_text: str) -> bool:
+        """Check if query contains real-time keywords requiring internet search."""
+        user_text_lower = (user_text or "").strip().lower()
+        real_time_keywords = [
+            "ماتش", "مباراة", "ماتشات", "مباريات", "كورة", "كوورة", "الاهلي", "الأهلي", "الزمالك",
+            "طقس", "الطقس", "درجة الحرارة", "درجه الحراره", "الجو", "المطر",
+            "سعر", "أسعار", "اسعار", "دولار", "يورو", "دهب", "ذهب", "عملة", "عمله", "بورصة", "بورصه",
+            "أخبار", "اخبار", "خبر", "جديد",
+            "النهارده", "النهاردة", "بكرة", "بكره"
+        ]
+        return any(kw in user_text_lower for kw in real_time_keywords)
+
     async def _is_complex_query(self, user_text: str) -> bool:
         """Smart LLM-based router to determine if query requires Debate Engine (Agentic RAG)."""
-        word_count = len(user_text.split())
-        if word_count > 15:
+        user_text_lower = (user_text or "").strip().lower()
+        
+        # Simple searches are not considered complex debate queries
+        word_count = len(user_text_lower.split())
+        if word_count > 25:
             return True
             
         system = (
             "You are a routing system. Answer with exactly and only 'YES' or 'NO'. "
-            "Does the following request require deep internet research, complex philosophical analysis, or multi-agent debate? "
-            "Simple math (e.g. 1+1), everyday chat, storytelling (احكي قصة), basic factual questions, and short requests should be 'NO'. "
-            "Only answer 'YES' for advanced topics, deep research, complex comparisons, or difficult coding tasks."
+            "Does the following request require a multi-agent debate, comparison of multiple different perspectives, "
+            "deep philosophical analysis, complex strategy planning, or multi-agent debate? "
+            "Simple factual questions, search engine queries (like weather, match times, news, prices), basic math, "
+            "everyday chat, and direct simple tasks should be answered 'NO'."
         )
         
         try:
-            # We can reuse the chat_archiver's LLM runner since it's already configured
             result = await self.chat_archiver.run_llm(system, user_text)
             response = str(result).strip().upper()
             return "YES" in response
         except Exception:
             # Fallback to a very minimal strict keyword list if LLM fails
             complex_kw = ["بحث عميق", "استراتيجية", "قضية معقدة", "قارن بين", "دراسة جدوى"]
-            return any(kw in user_text.lower() for kw in complex_kw)
+            return any(kw in user_text_lower for kw in complex_kw)
 
     async def demo(self, steps: int = 5) -> None:
         from brain.pi5.runtime import run_demo
@@ -545,10 +560,16 @@ class BrainRuntime:
         
         if user_text.strip():
             self._publish_activity_event(phase="thinking", title="تحليل وتصنيف السؤال", detail=user_text, source="runtime")
-            # 1. Check Question Cache first (folder-based, instant lookup)
-            # Only check cache for standalone questions (>2 words) to avoid false hits on contextual words like "كمل"
+            # 2. Complexity Routing
+            # Quick check: Is this a simple or creative query?
+            creative_keywords = ["قصة", "قصه", "حكاية", "احكي", "story", "tell", "لعبة", "نلعب", "العب", "game", "play"]
+            is_creative = any(kw in user_text.lower() for kw in creative_keywords)
+            
+            is_simple = not await self._safe_await(self._is_complex_query, user_text)
+            
+            # 1. Check Question Cache first (only for simple, non-creative queries)
             cached_answer = None
-            if len(user_text.split()) > 2:
+            if is_simple and not is_creative and len(user_text.split()) > 2:
                 try:
                     cached_answer = self.question_cache.find_answer(user_text)
                 except Exception:
@@ -558,17 +579,35 @@ class BrainRuntime:
                 logging.info(f"Cache HIT for '{user_text}'")
                 action = ActionCommand(kind="say", payload={"text": cached_answer})
             else:
-                # 2. Complexity Routing
-                # Quick check: Is this a simple or creative query?
-                creative_keywords = ["قصة", "قصه", "حكاية", "احكي", "story", "tell", "لعبة", "نلعب", "العب", "game", "play"]
-                is_creative = any(kw in user_text.lower() for kw in creative_keywords)
-                
-                is_simple = not await self._safe_await(self._is_complex_query, user_text)
-                
                 if is_simple or is_creative:
                     logging.info(f"Simple query '{user_text}', routing to single LLM")
                     self._publish_activity_event(phase="analyzing", title="جاري التفكير وصياغة الإجابة", detail=user_text, source="planner")
                     
+                    # --- PRE-FETCH WEB SEARCH FOR SIMPLE REAL-TIME QUERIES ---
+                    if self._needs_web_search(user_text):
+                        logging.info(f"Real-time search query detected: '{user_text}'. Pre-fetching search results...")
+                        self._publish_activity_event(
+                            phase="searching",
+                            title="جاري البحث في الويب",
+                            detail=user_text,
+                            source="browser"
+                        )
+                        search_findings = None
+                        try:
+                            from brain.agent_tools.visual_browser import get_visual_browser
+                            browser = get_visual_browser()
+                            search_findings = await browser.search(user_text)
+                        except Exception as e:
+                            logging.error(f"Visual browser pre-fetch search failed: {e}")
+                            
+                        if search_findings:
+                            logging.info("Pre-fetch search completed successfully. Appending context to user_text.")
+                            context_text = f"{user_text}\n\n[معلومات من البحث في الويب لاستخدامها في الإجابة]:\n{search_findings}"
+                            import dataclasses
+                            planned = dataclasses.replace(planned, text=context_text)
+                        else:
+                            logging.warning("Pre-fetch search returned no findings.")
+
                     # --- DYNAMIC VISION READING ---
                     # IMPROVEMENT: Take the snapshot IMMEDIATELY to avoid the user moving their hand
                     reading_keywords = [
@@ -692,8 +731,9 @@ class BrainRuntime:
                     "روشتة", "روشته", "ورقة", "ورقه", "اقرا", "اقرأ", "مكتوب", "ايه ده", "إيه ده"
                 ]
                 is_creative = any(kw in user_text.lower() for kw in creative_keywords)
+                is_simple = not await self._safe_await(self._is_complex_query, user_text)
                 
-                if not is_creative and len(user_text.split()) > 2 and "مش فاهم" not in ai_text:
+                if not is_creative and is_simple and len(user_text.split()) > 2 and "مش فاهم" not in ai_text:
                     try:
                         self.question_cache.save(user_text, ai_text)
                     except Exception:

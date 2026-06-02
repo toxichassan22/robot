@@ -55,6 +55,7 @@ class HuggingFaceClient:
         if not key:
             return
             
+        self._current_key = key
         if key.startswith("ms-"):
             from openai import OpenAI
             self.client = OpenAI(
@@ -155,6 +156,18 @@ class HuggingFaceClient:
 
     def _do_chat(self, model: str, messages: list[dict], temperature: float) -> str:
         """Execute the actual chat completion request."""
+        key = getattr(self, "_current_key", "")
+        if key and not key.startswith("sk-or-") and not key.startswith("sk-") and not key.startswith("ms-"):
+            hf_map = {
+                "mistralai/mistral-7b-instruct:free": "mistralai/Mistral-7B-Instruct-v0.3",
+                "google/gemini-2.5-flash:free": "google/gemma-2-9b-it",
+                "qwen/qwen-2.5-72b-instruct:free": "Qwen/Qwen2.5-72B-Instruct",
+                "meta-llama/llama-3.3-70b-instruct:free": "meta-llama/Llama-3.2-11B-Vision-Instruct",
+                "deepseek/deepseek-r1:free": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+            }
+            if model in hf_map:
+                model = hf_map[model]
+
         completion = self.client.chat.completions.create(
             model=model,
             messages=messages,
@@ -236,6 +249,18 @@ class HuggingFaceClient:
 
     def _do_image(self, model: str, messages: list[dict]) -> str:
         """Execute the actual image analysis request."""
+        key = getattr(self, "_current_key", "")
+        if key and not key.startswith("sk-or-") and not key.startswith("sk-") and not key.startswith("ms-"):
+            hf_map = {
+                "mistralai/mistral-7b-instruct:free": "mistralai/Mistral-7B-Instruct-v0.3",
+                "google/gemini-2.5-flash:free": "google/gemma-2-9b-it",
+                "qwen/qwen-2.5-72b-instruct:free": "Qwen/Qwen2.5-72B-Instruct",
+                "meta-llama/llama-3.3-70b-instruct:free": "meta-llama/Llama-3.2-11B-Vision-Instruct",
+                "deepseek/deepseek-r1:free": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+            }
+            if model in hf_map:
+                model = hf_map[model]
+
         completion = self.client.chat.completions.create(
             model=model,
             messages=messages,

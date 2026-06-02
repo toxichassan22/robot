@@ -91,6 +91,22 @@ class VisualBrowserService:
         await asyncio.sleep(1.0)
         await self.update_screenshot()
 
+    async def _is_captcha(self, page) -> bool:
+        try:
+            content = (await page.content()).lower()
+            title = (await page.title()).lower()
+            return (
+                "not a robot" in content or 
+                "captcha" in content or 
+                "recaptcha" in content or
+                "unusual traffic" in content or
+                "our systems have detected" in content or
+                "security check" in title or
+                "captcha" in title
+            )
+        except Exception:
+            return False
+
     async def search(self, query: str) -> str:
         page = await self.get_page()
         logger.info(f"Searching web for: {query}")
@@ -100,16 +116,53 @@ class VisualBrowserService:
             detail=query
         )
         url = f"https://www.google.com/search?q={quote_plus(query)}&hl=ar"
-        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-        await asyncio.sleep(1.5)
-        await self.update_screenshot()
+        links = []
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(1.5)
+            await self.update_screenshot()
+            
+            if await self._is_captcha(page):
+                logger.warning("Google CAPTCHA detected. Falling back to DuckDuckGo...")
+            else:
+                # Get links
+                links = await page.eval_on_selector_all(
+                    "div.g a",
+                    "els => els.map(el => el.href).filter(href => href && href.startsWith('http'))"
+                )
+        except Exception as e:
+            logger.warning(f"Google search navigation failed: {e}. Falling back to DuckDuckGo...")
 
-        # Get links
-        links = await page.eval_on_selector_all(
-            "div.g a",
-            "els => els.map(el => el.href).filter(href => href && href.startsWith('http'))"
-        )
-        
+        # Clean Google links to avoid search engine or helper links
+        links = [
+            link for link in links 
+            if not any(domain in link.lower() for domain in ["google.com", "google.com.eg", "gstatic.com", "youtube.com", "play.google.com"])
+        ]
+
+        if not links:
+            logger.info("Falling back to DuckDuckGo search...")
+            await self._publish_event(
+                phase="searching",
+                title="البحث البديل (DuckDuckGo)",
+                detail="جاري استخدام DuckDuckGo لتفادي الحظر..."
+            )
+            url = f"https://duckduckgo.com/?q={quote_plus(query)}"
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(2.0)
+                await self.update_screenshot()
+                raw_links = await page.eval_on_selector_all(
+                    "a",
+                    "els => els.map(el => el.href).filter(href => href && href.startsWith('http'))"
+                )
+                links = [
+                    link for link in raw_links 
+                    if not any(domain in link.lower() for domain in ["duckduckgo.com", "google.com", "bing.com", "yahoo.com", "wikipedia.org/wiki/special:", "wikipedia.org/wiki/file:"])
+                ]
+            except Exception as e:
+                logger.error(f"DuckDuckGo search failed: {e}")
+                links = []
+
         extracted_texts = []
         if links:
             target_link = links[0]
@@ -136,10 +189,10 @@ class VisualBrowserService:
                 logger.error(f"Failed to visit search result link: {e}")
                 # Fallback to search results page itself
                 search_text = await page.evaluate("() => document.body.innerText")
-                extracted_texts.append(f"Source: Google Search Results\nContent: {search_text[:1000]}")
+                extracted_texts.append(f"Source: Search Results\nContent: {search_text[:1000]}")
         else:
             search_text = await page.evaluate("() => document.body.innerText")
-            extracted_texts.append(f"Source: Google Search Results\nContent: {search_text[:1000]}")
+            extracted_texts.append(f"Source: Search Results\nContent: {search_text[:1000]}")
 
         await self._publish_event(
             phase="analyzing",

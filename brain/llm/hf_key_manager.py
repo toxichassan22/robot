@@ -302,6 +302,13 @@ class HFKeyManager:
     def is_key_error(error: Exception) -> str | None:
         """Classify an error. Returns 'exhausted', 'invalid', or None (not a key error)."""
         err_str = str(error).lower()
+        
+        # Avoid treating model-specific errors or bad requests as key errors
+        if "model" in err_str and ("not found" in err_str or "not support" in err_str or "not exist" in err_str or "invalid_request" in err_str):
+            return None
+        if "provider or policy" in err_str or "not valid" in err_str:
+            return None
+            
         # Check for HTTP status codes in the error message
         for code in EXHAUSTED_STATUS_CODES:
             if str(code) in err_str or "rate" in err_str or "quota" in err_str or "limit" in err_str:
