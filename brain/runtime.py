@@ -947,6 +947,178 @@ class BrainRuntime:
             self.perceiver.stop()
             logging.info("Brain: Perception loop stopped")
 
+    async def gemini_live_vision_loop(self) -> None:
+        """Runs the Gemini Live Vision Channel (Channel B) in the background with periodic renewal."""
+        logging.info("Brain: Gemini Live vision loop started")
+        from brain.speech.gemini_live_vision import run_vision_channel
+        
+        api_key = self.cfg.google_api_key
+        # Use config model or default live preview model
+        model_id = getattr(self.cfg, "gemini_live_model", None) or "gemini-3.1-flash-live-preview"
+        
+        # We need the camera instance
+        camera = getattr(self.perceiver.perceiver, "camera", None)
+        if not camera:
+            logging.warning("Brain: Gemini Live Vision loop disabled because camera is not initialized.")
+            return
+
+        rolling_observations: list[str] = []
+
+        async def on_tool_call(reason: str, focus: str) -> str:
+            logging.info(f"Gemini Live Vision requested deep analysis: focus='{focus}', reason='{reason}'")
+            self._publish_activity_event(
+                phase="thinking",
+                title="طلب تحليل بصري دقيق",
+                detail=f"التركيز: {focus}\nالسبب: {reason}",
+                source="vision"
+            )
+            # Run deep visual analysis using describe_now
+            prompt = f"Look very closely at the image. Focus: {focus}. Reason: {reason}."
+            try:
+                res = await asyncio.to_thread(self.perceiver.describe_now, prompt, level=2)
+                desc = res or "No extra details found."
+                logging.info(f"Deep visual analysis result: {desc}")
+                self._publish_activity_event(
+                    phase="idle",
+                    title="تم التحليل البصري الدقيق",
+                    detail=desc,
+                    source="vision"
+                )
+                return desc
+            except Exception as e:
+                logging.error(f"Deep visual analysis tool failed: {e}")
+                return f"Error executing deep analysis: {e}"
+
+        async def on_text_response(text: str) -> None:
+            clean = str(text or "").strip()
+            if not clean:
+                return
+            logging.info("Gemini Live Vision Observation: %s", clean)
+            
+            # Store in rolling list
+            rolling_observations.append(clean)
+            if len(rolling_observations) > 10:
+                rolling_observations.pop(0)
+
+            # Update perceiver's cache
+            self.perceiver.perceiver._cached_vision_desc = clean
+            self.perceiver.perceiver._cached_vision_desc_ts_ms = int(time.time() * 1000)
+            self.perceiver.perceiver._cached_vision_desc_event = "gemini_live_vision"
+
+            # Publish snapshot update
+            perception = PerceptionState(
+                ts_ms=int(time.time() * 1000),
+                vision_desc=clean,
+                vision_desc_ts_ms=int(time.time() * 1000)
+            )
+            self._publish_runtime_debug_snapshot(
+                heard_text=None,
+                rewritten_text=None,
+                perception=perception,
+                action=None,
+                source="gemini_live_vision_loop"
+            )
+
+        # Reconnection/renewal loop to avoid the 2-minute limit
+        while True:
+            session_instruction = (
+                "أنتِ واجهة الرؤية الحية للروبوت (Watchman). راقبي الكاميرا باستمرار. "
+                "لو شفتي أي شخص أو أي خطر أو أي تغير واضح، صفي المشهد باختصار في سطرين. "
+                "لو شفتي حاجة محتاجة دقة عالية أو قراءة نص أو تفاصيل دقيقة، استدعي الأداة `request_deep_visual_analysis` فوراً.\n"
+            )
+            if rolling_observations:
+                session_instruction += f"\nسياق المشاهدات السابقة:\n" + "\n".join(f"- {obs}" for obs in rolling_observations[-5:])
+
+            try:
+                # Create a task to run the vision channel
+                vision_task = asyncio.create_task(
+                    run_vision_channel(
+                        api_key=api_key,
+                        model_id=model_id,
+                        camera=camera,
+                        fps=1.0,
+                        on_tool_call=on_tool_call,
+                        on_text_response=on_text_response,
+                        system_instruction=session_instruction
+                    )
+                )
+                
+                # Let it run for 90 seconds (session renewal period)
+                await asyncio.sleep(90.0)
+                
+                # Gracefully cancel/refresh the session
+                logging.info("Brain: Renewing Gemini Live Vision session...")
+                vision_task.cancel()
+                try:
+                    await vision_task
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logging.error(f"Gemini Live Vision channel error: {e}. Reconnecting in 5s...")
+                await asyncio.sleep(5.0)
+
+    async def api_health_watchdog_loop(self) -> None:
+        """Periodically checks the connection to cloud APIs and triggers Safe Mode if offline."""
+        logging.info("Brain: API connection watchdog started")
+        failures = 0
+        is_safe_mode_active = False
+
+        async def check_api_health() -> bool:
+            try:
+                # We can perform a quick HEAD/GET request with a short timeout
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    # Ping OpenRouter status or model list
+                    resp = await client.get("https://openrouter.ai/api/v1/models")
+                    if resp.status_code == 200:
+                        return True
+            except Exception:
+                pass
+            return False
+
+        while True:
+            try:
+                online = await check_api_health()
+                if online:
+                    failures = 0
+                    if is_safe_mode_active:
+                        logging.info("API health restored. Exiting Safe Mode.")
+                        is_safe_mode_active = False
+                        self.state_manager.set_mode(RobotMode.IDLE)
+                        self._publish_activity_event(
+                            phase="idle",
+                            title="تم استعادة الاتصال بالإنترنت",
+                            detail="الروبوت جاهز للعمل الآن.",
+                            source="watchdog"
+                        )
+                        await self._safe_await(self.tts.say, "تم استعادة الاتصال بالشبكة. أنا جاهزة للعمل الآن.")
+                else:
+                    failures += 1
+                    logging.warning(f"API health check failed ({failures}/3)")
+                    if failures >= 3 and not is_safe_mode_active:
+                        logging.error("API connection lost! Activating local Safe Mode (EMERGENCY).")
+                        is_safe_mode_active = True
+                        self.state_manager.set_mode(RobotMode.EMERGENCY)
+                        
+                        # Execute emergency stop
+                        stop_cmd = ActionCommand(kind="motion", payload={"direction": "stop", "speed": 0.0, "duration_ms": 0})
+                        await self.safe_executor.execute(stop_cmd)
+                        
+                        self._publish_activity_event(
+                            phase="error",
+                            title="وضع الأمان (فقدان الاتصال بالإنترنت)",
+                            detail="تم إيقاف المحركات تلقائياً بسبب انقطاع الشبكة.",
+                            severity="error",
+                            source="watchdog"
+                        )
+                        await self._safe_await(self.tts.say, "عذراً، انقطع الاتصال بالإنترنت. تم تفعيل وضع الأمان وإيقاف الحركة.")
+            except Exception as e:
+                logging.error(f"Error in API health watchdog: {e}")
+
+            # If safe mode is active, check more frequently (every 5s). Otherwise check every 20s.
+            await asyncio.sleep(5.0 if is_safe_mode_active else 20.0)
+
     async def gemini_live_voice_loop(self) -> None:
         logging.info("Brain: Gemini Live voice loop started")
         client = create_live_client(self.cfg.google_api_key)
@@ -1239,6 +1411,17 @@ class BrainRuntime:
             _resilient("connection_health", self.connection_health_loop())
         )
         
+        # New background tasks
+        vision_live_task = None
+        if self.gemini_live_audio_enabled:
+            vision_live_task = asyncio.create_task(
+                _resilient("gemini_live_vision_loop", self.gemini_live_vision_loop())
+            )
+        
+        watchdog_task = asyncio.create_task(
+            _resilient("api_health_watchdog", self.api_health_watchdog_loop())
+        )
+        
         # Say welcome message
         self.command_queue.put_nowait({
             "kind": "say",
@@ -1249,7 +1432,7 @@ class BrainRuntime:
         
         # Keep alive – only the critical pair (server + commands) must stay up
         try:
-            await asyncio.gather(
+            tasks = [
                 server_task, 
                 cmd_task, 
                 perception_task, 
@@ -1257,6 +1440,10 @@ class BrainRuntime:
                 heartbeat_task,
                 thermal_task,
                 health_task,
-            )
+                watchdog_task,
+            ]
+            if vision_live_task:
+                tasks.append(vision_live_task)
+            await asyncio.gather(*tasks)
         except asyncio.CancelledError:
             logging.info("Brain runtime cancelled")

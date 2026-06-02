@@ -82,21 +82,19 @@ class HuggingFaceLLMWrapper:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        logger.debug(f"[{self.name}] Sending request to HuggingFace (model: {self.model_name})...")
+        logger.debug(f"[{self.name}] Sending request to HuggingFace/OpenRouter (model: {self.model_name})...")
 
-        try:
-            # chat is synchronous, so we run it in a thread to not block the event loop
-            import asyncio
-            result = await asyncio.to_thread(
-                self.hf_client.chat,
-                model=self.model_name,
-                messages=messages,
-                temperature=0.2
-            )
-            return result
-        except Exception as e:
-            logger.error(f"[{self.name}] Error: {str(e)}")
-            raise e
+        if not self.hf_client._resolve_key():
+            raise RuntimeError("No keys available in key manager")
+        # chat is synchronous, so we run it in a thread to not block the event loop
+        import asyncio
+        result = await asyncio.to_thread(
+            self.hf_client.chat,
+            model=self.model_name,
+            messages=messages,
+            temperature=0.2
+        )
+        return result
 
 
 # ── Lazy model initialization ────────────────────────────────────────
@@ -115,8 +113,9 @@ def _get_hf_client():
             key_manager = _get_key_manager()
         except Exception:
             key_manager = None
+        # Set default_model="" to let the wrappers choose their own models
         _models_cache["hf_client"] = HuggingFaceClient(
-            default_model="moonshotai/kimi-k2.6:free", key_manager=key_manager
+            default_model="", key_manager=key_manager
         )
     return _models_cache["hf_client"]
 
@@ -131,36 +130,32 @@ def get_deepseek():
 
 def get_minimax():
     if "minimax" not in _models_cache:
-        _models_cache["minimax"] = LLMWrapper(
-            "Minimax", os.getenv("OLLAMA_CLOUD_URL", "http://127.0.0.1:11434"),
-            "minimax-m2.7:cloud", timeout=None
+        _models_cache["minimax"] = HuggingFaceLLMWrapper(
+            "Minimax", "google/gemini-2.5-flash:free", _get_hf_client()
         )
     return _models_cache["minimax"]
 
 
 def get_qwen():
     if "qwen" not in _models_cache:
-        _models_cache["qwen"] = LLMWrapper(
-            "Qwen", os.getenv("OLLAMA_CLOUD_URL", "http://127.0.0.1:11434"),
-            "qwen3.5:397b-cloud", timeout=None
+        _models_cache["qwen"] = HuggingFaceLLMWrapper(
+            "Qwen", "qwen/qwen-2.5-72b-instruct:free", _get_hf_client()
         )
     return _models_cache["qwen"]
 
 
 def get_nemotron():
     if "nemotron" not in _models_cache:
-        _models_cache["nemotron"] = LLMWrapper(
-            "Nemotron", os.getenv("OLLAMA_CLOUD_URL", "http://127.0.0.1:11434"),
-            "nemotron-3-super:cloud", timeout=None
+        _models_cache["nemotron"] = HuggingFaceLLMWrapper(
+            "Nemotron", "meta-llama/llama-3.3-70b-instruct:free", _get_hf_client()
         )
     return _models_cache["nemotron"]
 
 
 def get_glm():
     if "glm" not in _models_cache:
-        _models_cache["glm"] = LLMWrapper(
-            "GLM", os.getenv("OLLAMA_CLOUD_URL", "http://127.0.0.1:11434"),
-            "glm-4.7:cloud", timeout=None
+        _models_cache["glm"] = HuggingFaceLLMWrapper(
+            "GLM", "deepseek/deepseek-chat:free", _get_hf_client()
         )
     return _models_cache["glm"]
 

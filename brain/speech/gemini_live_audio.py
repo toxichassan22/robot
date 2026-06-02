@@ -34,10 +34,15 @@ class LiveAudioStreams:
 
 
 def pick_live_voice(voice_gender: str = "female", explicit_voice: str = "") -> str:
+    import random
     explicit = str(explicit_voice or os.getenv("BRAIN_GEMINI_LIVE_VOICE", "")).strip()
     if explicit:
         return explicit
-    return "Charon" if str(voice_gender or "").strip().lower() == "male" else "Kore"
+    
+    gender = str(voice_gender or "").strip().lower()
+    if gender == "both":
+        return random.choice(["Charon", "Kore"])
+    return "Charon" if gender == "male" else "Kore"
 
 
 def build_live_audio_config(

@@ -108,9 +108,13 @@ class EdgeTTS(TTSBase):
     def _play_text(self, text: str):
         import edge_tts  # type: ignore
 
-        voice = pick_edge_voice(language=self.language, voice_gender=self.voice_gender, explicit_voice=self.voice_uri)
+        gender = self.voice_gender.lower()
+        if gender == "both":
+            import random
+            gender = random.choice(["male", "female"])
+        voice = pick_edge_voice(language=self.language, voice_gender=gender, explicit_voice=self.voice_uri)
         rate, pitch = edge_prosody(language=self.language, tts_rate=self.tts_rate)
-        logging.info(f"Edge TTS: using voice '{voice}', rate={rate}, pitch={pitch}")
+        logging.info(f"Edge TTS: using voice '{voice}' ({gender}), rate={rate}, pitch={pitch}")
 
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
             temp_path = temp_file.name
@@ -250,7 +254,11 @@ class GoogleTTS(TTSBase):
     def _play_text_cloud(self, text: str):
         # ar-EG-Neural2-A: Female
         # ar-EG-Neural2-B: Male
-        voice_name = "ar-EG-Neural2-A" if self.voice_gender.lower() == 'female' else "ar-EG-Neural2-B"
+        gender = self.voice_gender.lower()
+        if gender == "both":
+            import random
+            gender = random.choice(["male", "female"])
+        voice_name = "ar-EG-Neural2-A" if gender == 'female' else "ar-EG-Neural2-B"
         
         synthesis_input = _gcloud_tts.SynthesisInput(text=text)
         voice = _gcloud_tts.VoiceSelectionParams(
@@ -466,13 +474,18 @@ class GeminiTTS(TTSBase):
         text = text.replace("Aria", "أريا").replace("aria", "أريا")
 
         model_id = self.model_id
+        gender = self.voice_gender.lower()
+        if gender == "both":
+            import random
+            gender = random.choice(["male", "female"])
+
         VOICE_MAP = {
             "female": "Kore",
             "male": "Charon",
         }
-        chosen_voice = VOICE_MAP.get(self.voice_gender.lower(), "Kore")
+        chosen_voice = VOICE_MAP.get(gender, "Kore")
         
-        logging.info(f"Gemini TTS: voice={chosen_voice}, streaming to speaker")
+        logging.info(f"Gemini TTS: voice={chosen_voice} ({gender}), streaming to speaker")
 
         def chunk_callback(chunk):
             if self.stream:
@@ -485,7 +498,7 @@ class GeminiTTS(TTSBase):
                 synthesize_gemini_live_pcm(
                     text=text,
                     api_key=self.api_key,
-                    voice_gender=self.voice_gender,
+                    voice_gender=gender,
                     voice_name=chosen_voice,
                     model_id=model_id,
                     timeout_s=30.0,

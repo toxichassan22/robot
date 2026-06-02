@@ -91,11 +91,12 @@ async def run_vision_channel(
     fps: float,
     on_tool_call: Callable[[str, str], Any],
     on_text_response: Callable[[str], Any],
+    system_instruction: str | None = None,
 ) -> None:
     """Main loop for the Gemini Live Vision Channel (Channel B)."""
     client = create_live_client(api_key, env_var="BRAIN_VISION_API_KEY")
     model = resolve_live_model(model_id)
-    config = build_live_vision_config()
+    config = build_live_vision_config(system_instruction=system_instruction)
 
     logger.info("Connecting to Gemini Live Vision Channel (Channel B)...")
     
@@ -129,7 +130,32 @@ async def run_vision_channel(
                             
                             res = on_tool_call(reason, focus)
                             if asyncio.iscoroutine(res):
-                                await res
+                                result = await res
+                            else:
+                                result = res
+                            
+                            try:
+                                await session.send(
+                                    input=types.LiveClientContent(
+                                        turns=[
+                                            types.Content(
+                                                role="user",
+                                                parts=[
+                                                    types.Part(
+                                                        function_response=types.FunctionResponse(
+                                                            name=call.name,
+                                                            id=call.id,
+                                                            response={"output": str(result or "")}
+                                                        )
+                                                    )
+                                                ]
+                                            )
+                                        ]
+                                    )
+                                )
+                                logger.info("Sent deep visual analysis response back to Gemini session.")
+                            except Exception as e:
+                                logger.error(f"Failed to send function response back to Gemini: {e}")
 
                 # Handle Text Responses
                 if hasattr(response, "text") and response.text:
