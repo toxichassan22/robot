@@ -760,49 +760,82 @@ export function SettingsContent() {
           <div className="space-y-8 sm:space-y-12">
             <div className="space-y-4">
               <div className="flex flex-col gap-2">
-                <label className={labelClass}>Ollama LLM Endpoint</label>
-                <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
-                  <input
-                    value={s.ollamaBaseUrl}
-                    onChange={(e) => updateSetting({ ollamaBaseUrl: e.target.value })}
-                    className="ts-input flex-1 focus:outline-none"
-                    placeholder="http://127.0.0.1:11434"
-                  />
-                  <button
-                    onClick={() => loadModels("ollama")}
-                    disabled={ollamaLoading}
-                    title="Probe Ollama Node"
-                    className={probeButtonClass}
-                  >
-                    Probe
-                  </button>
-                </div>
+                <label className={labelClass}>LLM Provider</label>
+                <select
+                  title="LLM Provider"
+                  value={s.provider || "ollama"}
+                  onChange={(e) => updateSetting({ provider: e.target.value as any })}
+                  className="ts-select focus:outline-none"
+                >
+                  <option value="ollama">Ollama (Local/Cloud)</option>
+                  <option value="openrouter">OpenRouter (Key Rotation)</option>
+                </select>
               </div>
-              <div className="flex flex-col gap-2">
-                <label className={labelClass}>Active LLM Model</label>
-                {ollamaModels.length > 0 ? (
-                  <select
-                    title="Ollama Model"
-                    value={s.ollamaModel}
-                    onChange={(e) => updateSetting({ ollamaModel: e.target.value })}
-                    className="ts-select focus:outline-none"
-                  >
-                    {ollamaModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
+
+              {(s.provider === "ollama" || !s.provider) && (
+                <>
+                  <div className="flex flex-col gap-2">
+                    <label className={labelClass}>Ollama LLM Endpoint</label>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+                      <input
+                        value={s.ollamaBaseUrl}
+                        onChange={(e) => updateSetting({ ollamaBaseUrl: e.target.value })}
+                        className="ts-input flex-1 focus:outline-none"
+                        placeholder="http://127.0.0.1:11434"
+                      />
+                      <button
+                        onClick={() => loadModels("ollama")}
+                        disabled={ollamaLoading}
+                        title="Probe Ollama Node"
+                        className={probeButtonClass}
+                      >
+                        Probe
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className={labelClass}>Active LLM Model</label>
+                    {ollamaModels.length > 0 ? (
+                      <select
+                        title="Ollama Model"
+                        value={s.ollamaModel}
+                        onChange={(e) => updateSetting({ ollamaModel: e.target.value })}
+                        className="ts-select focus:outline-none"
+                      >
+                        {ollamaModels.map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        title="Ollama Model"
+                        placeholder="gemma3:4b"
+                        value={s.ollamaModel}
+                        onChange={(e) => updateSetting({ ollamaModel: e.target.value })}
+                        className="ts-input focus:outline-none"
+                      />
+                    )}
+                  </div>
+                </>
+              )}
+
+              {s.provider === "openrouter" && (
+                <div className="flex flex-col gap-2">
+                  <label className={labelClass}>Active OpenRouter Model</label>
                   <input
-                    title="Ollama Model"
-                    placeholder="gemma3:4b"
-                    value={s.ollamaModel}
-                    onChange={(e) => updateSetting({ ollamaModel: e.target.value })}
+                    title="OpenRouter Model"
+                    placeholder="moonshotai/kimi-k2.6:free"
+                    value={s.hfModel || ""}
+                    onChange={(e) => updateSetting({ hfModel: e.target.value })}
                     className="ts-input focus:outline-none"
                   />
-                )}
-              </div>
+                  <div className={helperClass}>
+                    Specify any model supported by OpenRouter (e.g. moonshotai/kimi-k2.6:free). Make sure to configure the keys on the API Keys page.
+                  </div>
+                </div>
+              )}
               <div className="flex flex-col gap-2">
                 <label className={labelClass}>LLM Compute Device</label>
                 <select

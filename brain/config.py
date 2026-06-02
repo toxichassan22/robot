@@ -22,6 +22,7 @@ def normalize_chatterbox_voice_mode(value: object, default: str = "predefined") 
 class BrainConfig:
     log_level: str = "INFO"
     transport: str = "mock"
+    provider: str = "openrouter"
 
     esp32_tcp_host: str = "127.0.0.1"
     esp32_tcp_port: int = 8765
@@ -175,6 +176,7 @@ class BrainConfig:
         return BrainConfig(
             log_level=os.getenv("BRAIN_LOG_LEVEL", "INFO"),
             transport=os.getenv("BRAIN_TRANSPORT", "mock"),
+            provider=os.getenv("BRAIN_LLM_PROVIDER", "openrouter"),
             esp32_tcp_host=os.getenv("BRAIN_ESP32_TCP_HOST", "127.0.0.1"),
             esp32_tcp_port=BrainConfig._parse_int("BRAIN_ESP32_TCP_PORT", 8765, min_v=1, max_v=65535),
             esp32_serial_port=os.getenv("BRAIN_ESP32_SERIAL_PORT", ""),
@@ -269,8 +271,10 @@ class BrainConfig:
         else:
             allowed_topics = self.allowed_topics
 
+        provider = settings.get("provider")
         ollama_base_url = settings.get("ollamaBaseUrl")
         ollama_model = settings.get("ollamaModel")
+        hf_model = settings.get("hfModel")
         llm_device = settings.get("llmDevice")
         
         vlm_base_url = settings.get("vlmBaseUrl")
@@ -342,8 +346,10 @@ class BrainConfig:
 
         return replace(
             self,
+            provider=str(provider).strip() if isinstance(provider, str) and provider.strip() else self.provider,
             ollama_base_url=str(ollama_base_url).strip() if isinstance(ollama_base_url, str) and ollama_base_url.strip() else self.ollama_base_url,
             ollama_model=str(ollama_model).strip() if isinstance(ollama_model, str) and ollama_model.strip() else self.ollama_model,
+            hf_model=str(hf_model).strip() if isinstance(hf_model, str) and hf_model.strip() else self.hf_model,
             llm_device="gpu" if str(llm_device).strip().lower() == "gpu" else "cpu",
             vlm_base_url=str(vlm_base_url).strip() if isinstance(vlm_base_url, str) and vlm_base_url.strip() else self.vlm_base_url,
             vlm_model=str(vlm_model).strip() if isinstance(vlm_model, str) and vlm_model.strip() else self.vlm_model,

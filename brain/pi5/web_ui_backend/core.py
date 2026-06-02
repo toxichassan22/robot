@@ -111,7 +111,7 @@ def normalize_chatterbox_voice_mode(value: Any) -> str:
 class RobotSettings(BaseModel):
     version: int = CURRENT_SETTINGS_VERSION
     updatedAtMs: int = 0
-    provider: str = "ollama"
+    provider: str = "openrouter"
     allowedTopics: List[str] = []
     robotLanguage: str = "ar-EG"
     sttLang: str = "ar-EG"
@@ -131,6 +131,7 @@ class RobotSettings(BaseModel):
     gestureBindings: Dict[str, str] = {}
     ollamaBaseUrl: str = os.getenv("BRAIN_OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     ollamaModel: str = os.getenv("BRAIN_OLLAMA_MODEL", "mistral:latest")
+    hfModel: str = os.getenv("BRAIN_HF_MODEL", "moonshotai/kimi-k2.6:free")
     ollamaCloudUrl: str = os.getenv("BRAIN_OLLAMA_CLOUD_URL", "")
     ollamaCloudModel: str = os.getenv("BRAIN_OLLAMA_CLOUD_MODEL", "")
     llmDevice: str = os.getenv("BRAIN_LLM_DEVICE", DEFAULT_LLM_DEVICE)

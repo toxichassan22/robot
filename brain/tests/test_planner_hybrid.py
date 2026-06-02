@@ -11,6 +11,7 @@ def _cfg_with_ollama(tmp_path) -> BrainConfig:
     return BrainConfig(
         log_level="INFO",
         transport="mock",
+        provider="ollama",
         esp32_tcp_host="127.0.0.1",
         esp32_tcp_port=8765,
         esp32_serial_port="",

@@ -54,9 +54,10 @@ class RuleBasedPlanner(Planner):
         return ""
 
     def _llm_vision_answer(self, question: str, vision_desc: str) -> str:
-        if self.cfg.hf_api_key:
-            model = self.cfg.hf_model
-        elif self.cfg.google_api_key:
+        provider = str(self.cfg.provider or "ollama").strip().lower()
+        if provider in ("openrouter", "huggingface") or self.cfg.hf_api_key:
+            model = self.cfg.hf_model or "moonshotai/kimi-k2.6:free"
+        elif provider == "gemini" or self.cfg.google_api_key:
             model = self.cfg.gemini_model
         else:
             model = self.cfg.ollama_model
@@ -83,9 +84,14 @@ class RuleBasedPlanner(Planner):
             ensure_ascii=False,
         )
         try:
-            if self.cfg.hf_api_key:
+            if provider in ("openrouter", "huggingface") or self.cfg.hf_api_key:
                 from brain.llm.huggingface_client import HuggingFaceClient
-                client = HuggingFaceClient(api_key=self.cfg.hf_api_key, default_model=self.cfg.hf_model)
+                try:
+                    from brain.pi5.web_ui_backend.routers.api_keys import _get_key_manager
+                    key_manager = _get_key_manager()
+                except Exception:
+                    key_manager = None
+                client = HuggingFaceClient(api_key=self.cfg.hf_api_key, default_model=model, key_manager=key_manager)
                 return client.chat(
                     model=model,
                     messages=[
@@ -94,7 +100,7 @@ class RuleBasedPlanner(Planner):
                     ],
                     temperature=0.1,
                 ).strip()
-            elif self.cfg.google_api_key:
+            elif provider == "gemini" or self.cfg.google_api_key:
                 from brain.llm.gemini_client import GeminiClient
                 client = GeminiClient(api_key=self.cfg.google_api_key)
                 return client.chat(
@@ -476,7 +482,12 @@ class LlmPlanner(Planner):
 
     def _huggingface_json(self, system: str, user: str) -> str:
         from brain.llm.huggingface_client import HuggingFaceClient
-        client = HuggingFaceClient(api_key=self.api_key, default_model=self.model)
+        try:
+            from brain.pi5.web_ui_backend.routers.api_keys import _get_key_manager
+            key_manager = _get_key_manager()
+        except Exception:
+            key_manager = None
+        client = HuggingFaceClient(api_key=self.api_key, default_model=self.model, key_manager=key_manager)
         return client.chat(
             model=self.model,
             messages=[
@@ -490,36 +501,76 @@ class LlmPlanner(Planner):
 def build_planner(cfg: BrainConfig, memory: SqliteMemory) -> Planner:
     rule = RuleBasedPlanner(memory=memory, cfg=cfg)
     
-    planners: list[Planner] = []
+    provider = str(cfg.provider or "ollama").strip().lower()
     
-    # Add Cloud Ollama if configured
-    if cfg.ollama_cloud_url and cfg.ollama_cloud_model:
-        planners.append(LlmPlanner(
+    if provider in ("openrouter", "huggingface"):
+        model = cfg.hf_model or "moonshotai/kimi-k2.6:free"
+        llm = LlmPlanner(
             memory=memory,
-            provider="ollama",
-            base_url=cfg.ollama_cloud_url,
-            model=cfg.ollama_cloud_model,
-            device=cfg.llm_device,
+            provider="huggingface",
+            base_url="",
+            model=model,
+            api_key=cfg.hf_api_key,
             allowed_topics=cfg.allowed_topics,
             robot_language=cfg.robot_language,
-        ))
-        
-    # Add Local Ollama if configured
-    if cfg.ollama_model:
-        planners.append(LlmPlanner(
-            memory=memory,
-            provider="ollama",
-            base_url=cfg.ollama_base_url,
-            model=cfg.ollama_model,
-            device=cfg.llm_device,
-            allowed_topics=cfg.allowed_topics,
-            robot_language=cfg.robot_language,
-        ))
-
-    if planners:
-        llm = FallbackLlmPlanner(planners=planners) if len(planners) > 1 else planners[0]
+        )
         return HybridPlanner(rule=rule, llm=llm)
-    
+        
+    elif provider == "openai":
+        llm = LlmPlanner(
+            memory=memory,
+            provider="openai",
+            base_url=cfg.openai_base_url,
+            model=cfg.openai_model,
+            api_key=cfg.openai_api_key,
+            allowed_topics=cfg.allowed_topics,
+            robot_language=cfg.robot_language,
+        )
+        return HybridPlanner(rule=rule, llm=llm)
+        
+    elif provider == "gemini":
+        llm = LlmPlanner(
+            memory=memory,
+            provider="gemini",
+            base_url="",
+            model=cfg.gemini_model,
+            api_key=cfg.google_api_key,
+            allowed_topics=cfg.allowed_topics,
+            robot_language=cfg.robot_language,
+        )
+        return HybridPlanner(rule=rule, llm=llm)
+        
+    elif provider == "ollama":
+        planners: list[Planner] = []
+        # Add Cloud Ollama if configured
+        if cfg.ollama_cloud_url and cfg.ollama_cloud_model:
+            planners.append(LlmPlanner(
+                memory=memory,
+                provider="ollama",
+                base_url=cfg.ollama_cloud_url,
+                model=cfg.ollama_cloud_model,
+                device=cfg.llm_device,
+                allowed_topics=cfg.allowed_topics,
+                robot_language=cfg.robot_language,
+            ))
+            
+        # Add Local Ollama if configured
+        if cfg.ollama_model:
+            planners.append(LlmPlanner(
+                memory=memory,
+                provider="ollama",
+                base_url=cfg.ollama_base_url,
+                model=cfg.ollama_model,
+                device=cfg.llm_device,
+                allowed_topics=cfg.allowed_topics,
+                robot_language=cfg.robot_language,
+            ))
+
+        if planners:
+            llm = FallbackLlmPlanner(planners=planners) if len(planners) > 1 else planners[0]
+            return HybridPlanner(rule=rule, llm=llm)
+            
+    # Fallback to older env-based resolution if provider is unknown/empty
     if cfg.openai_api_key:
         llm = LlmPlanner(
             memory=memory,

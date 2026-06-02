@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type Provider = "ollama";
+export type Provider = "ollama" | "openrouter" | "openai" | "gemini";
 
 export type ThemePreference = "light" | "dark" | "auto";
 export type ExecutionDevice = "cpu" | "gpu";
@@ -12,6 +12,7 @@ export type BasicSettings = {
 
   ollamaBaseUrl: string;
   ollamaModel: string;
+  hfModel: string;
   llmDevice: ExecutionDevice;
   vlmBaseUrl: string;
   vlmModel: string;
@@ -74,6 +75,7 @@ export function pickSettingsSnapshot(source: Pick<SettingsState, keyof SettingsS
     provider: source.provider,
     ollamaBaseUrl: source.ollamaBaseUrl,
     ollamaModel: source.ollamaModel,
+    hfModel: source.hfModel,
     llmDevice: source.llmDevice,
     vlmBaseUrl: source.vlmBaseUrl,
     vlmModel: source.vlmModel,
@@ -117,9 +119,10 @@ export function pickSettingsSnapshot(source: Pick<SettingsState, keyof SettingsS
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
-      provider: "ollama",
+      provider: "openrouter",
       ollamaBaseUrl: "http://127.0.0.1:11434",
       ollamaModel: "gemma3:4b",
+      hfModel: "moonshotai/kimi-k2.6:free",
       llmDevice: "cpu",
       vlmBaseUrl: "http://127.0.0.1:11434",
       vlmModel: "moondream:latest",
@@ -163,6 +166,7 @@ export const useSettingsStore = create<SettingsState>()(
               provider: s.provider,
               ollamaBaseUrl: s.ollamaBaseUrl,
               ollamaModel: s.ollamaModel,
+              hfModel: s.hfModel,
               llmDevice: s.llmDevice,
               vlmBaseUrl: s.vlmBaseUrl,
               vlmModel: s.vlmModel,
@@ -220,10 +224,10 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: "local-robot-tester:settings",
-      version: 12,
+      version: 13,
       migrate: (persistedState, version) => {
         const s = (persistedState || {}) as Record<string, unknown>;
-        if (version >= 12) return s as unknown as SettingsState;
+        if (version >= 13) return s as unknown as SettingsState;
         const raw = (persistedState || {}) as Record<string, unknown>;
         const allowedTopics = Array.isArray(raw.allowedTopics)
           ? raw.allowedTopics.map((x) => String(x || "").trim()).filter(Boolean)
@@ -277,6 +281,7 @@ export const useSettingsStore = create<SettingsState>()(
           provider: (typeof raw.provider === "string" ? (raw.provider as Provider) : "ollama") || "ollama",
           ollamaBaseUrl: typeof raw.ollamaBaseUrl === "string" ? raw.ollamaBaseUrl : "http://127.0.0.1:11434",
           ollamaModel: typeof raw.ollamaModel === "string" && raw.ollamaModel.trim() ? raw.ollamaModel : "gemma3:4b",
+          hfModel: typeof raw.hfModel === "string" && raw.hfModel.trim() ? raw.hfModel : "moonshotai/kimi-k2.6:free",
           llmDevice,
           vlmBaseUrl: typeof raw.vlmBaseUrl === "string" ? raw.vlmBaseUrl : "http://127.0.0.1:11434",
           vlmModel: typeof raw.vlmModel === "string" && raw.vlmModel.trim() ? raw.vlmModel : "moondream:latest",
